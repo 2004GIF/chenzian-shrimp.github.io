@@ -13,6 +13,47 @@
 实现思路：
 1. 监听nacos配置文件
 2. 更新网关的路由表
+
+
+实现：
+1. 导入坐标
+```xml
+   <!-- nacos -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+
+        <!-- 读取 nacos 中定义的配置 -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+        </dependency>
+
+        <!--
+         使用 bootstrap 配置文件
+         主要用于应用程序的引导阶段配置，在项目启动时先加载 bootstrap配置文件，再加载 application 配置文件
+         -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-bootstrap</artifactId>
+        </dependency>
+
+```
+2. 创建bootstrap文件配置 nacos 等配置信息
+```yaml
+spring:
+  application: # 服务名称
+    name: gateway
+  profiles:
+    active: dev
+  cloud:
+    # nacos 配置
+    nacos:
+      server-addr: 192.168.42.135:8848
+
+```
+3. 写实现代码
 ````java
 package com.hmall.gateway.router;
 
@@ -114,12 +155,54 @@ public class DynamicRouterConfig {
 
 }
 
-````。">
+````
+。">
 <meta property="og:title" content="网关-动态路由">
 <meta property="og:description" content="# 网关-动态路由
 实现思路：
 1. 监听nacos配置文件
 2. 更新网关的路由表
+
+
+实现：
+1. 导入坐标
+```xml
+   <!-- nacos -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+
+        <!-- 读取 nacos 中定义的配置 -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+        </dependency>
+
+        <!--
+         使用 bootstrap 配置文件
+         主要用于应用程序的引导阶段配置，在项目启动时先加载 bootstrap配置文件，再加载 application 配置文件
+         -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-bootstrap</artifactId>
+        </dependency>
+
+```
+2. 创建bootstrap文件配置 nacos 等配置信息
+```yaml
+spring:
+  application: # 服务名称
+    name: gateway
+  profiles:
+    active: dev
+  cloud:
+    # nacos 配置
+    nacos:
+      server-addr: 192.168.42.135:8848
+
+```
+3. 写实现代码
 ````java
 package com.hmall.gateway.router;
 
@@ -221,7 +304,8 @@ public class DynamicRouterConfig {
 
 }
 
-````。">
+````
+。">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://2004GIF.github.io/chenzian-shrimp.github.io/post/wang-guan---dong-tai-lu-you.html">
 <meta property="og:image" content="https://github.githubassets.com/favicons/favicon.svg">
@@ -285,6 +369,47 @@ body{box-sizing: border-box;min-width: 200px;max-width: 900px;margin: 20px auto;
 <ol>
 <li>监听nacos配置文件</li>
 <li>更新网关的路由表</li>
+</ol>
+<p>实现：</p>
+<ol>
+<li>导入坐标</li>
+</ol>
+<div class="highlight highlight-text-xml"><pre class="notranslate">   <span class="pl-c"><span class="pl-c">&lt;!--</span> nacos <span class="pl-c">--&gt;</span></span>
+        &lt;<span class="pl-ent">dependency</span>&gt;
+            &lt;<span class="pl-ent">groupId</span>&gt;com.alibaba.cloud&lt;/<span class="pl-ent">groupId</span>&gt;
+            &lt;<span class="pl-ent">artifactId</span>&gt;spring-cloud-starter-alibaba-nacos-discovery&lt;/<span class="pl-ent">artifactId</span>&gt;
+        &lt;/<span class="pl-ent">dependency</span>&gt;
+
+        <span class="pl-c"><span class="pl-c">&lt;!--</span> 读取 nacos 中定义的配置 <span class="pl-c">--&gt;</span></span>
+        &lt;<span class="pl-ent">dependency</span>&gt;
+            &lt;<span class="pl-ent">groupId</span>&gt;com.alibaba.cloud&lt;/<span class="pl-ent">groupId</span>&gt;
+            &lt;<span class="pl-ent">artifactId</span>&gt;spring-cloud-starter-alibaba-nacos-config&lt;/<span class="pl-ent">artifactId</span>&gt;
+        &lt;/<span class="pl-ent">dependency</span>&gt;
+
+        <span class="pl-c"><span class="pl-c">&lt;!--</span></span>
+<span class="pl-c">         使用 bootstrap 配置文件</span>
+<span class="pl-c">         主要用于应用程序的引导阶段配置，在项目启动时先加载 bootstrap配置文件，再加载 application 配置文件</span>
+<span class="pl-c">         <span class="pl-c">--&gt;</span></span>
+        &lt;<span class="pl-ent">dependency</span>&gt;
+            &lt;<span class="pl-ent">groupId</span>&gt;org.springframework.cloud&lt;/<span class="pl-ent">groupId</span>&gt;
+            &lt;<span class="pl-ent">artifactId</span>&gt;spring-cloud-starter-bootstrap&lt;/<span class="pl-ent">artifactId</span>&gt;
+        &lt;/<span class="pl-ent">dependency</span>&gt;
+</pre></div>
+<ol start="2">
+<li>创建bootstrap文件配置 nacos 等配置信息</li>
+</ol>
+<div class="highlight highlight-source-yaml"><pre class="notranslate"><span class="pl-ent">spring</span>:
+  <span class="pl-ent">application</span>: <span class="pl-c"><span class="pl-c">#</span> 服务名称</span>
+    <span class="pl-ent">name</span>: <span class="pl-s">gateway</span>
+  <span class="pl-ent">profiles</span>:
+    <span class="pl-ent">active</span>: <span class="pl-s">dev</span>
+  <span class="pl-ent">cloud</span>:
+    <span class="pl-c"><span class="pl-c">#</span> nacos 配置</span>
+    <span class="pl-ent">nacos</span>:
+      <span class="pl-ent">server-addr</span>: <span class="pl-s">192.168.42.135:8848</span>
+</pre></div>
+<ol start="3">
+<li>写实现代码</li>
 </ol>
 <div class="highlight highlight-source-java"><pre class="notranslate"><span class="pl-k">package</span> <span class="pl-s1">com</span>.<span class="pl-s1">hmall</span>.<span class="pl-s1">gateway</span>.<span class="pl-s1">router</span>;
 
