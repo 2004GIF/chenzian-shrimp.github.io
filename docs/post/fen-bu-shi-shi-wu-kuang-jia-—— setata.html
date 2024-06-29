@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html data-color-mode="light" data-dark-theme="dark" data-light-theme="light" lang="zh-CN">
+<head>
+    <meta content="text/html; charset=utf-8" http-equiv="content-type" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <link href="//cdn.staticfile.net/Primer/21.0.7/primer.css" rel="stylesheet" />
+    <link rel="icon" href="https://github.githubassets.com/favicons/favicon.svg"><script>
+        let theme = localStorage.getItem("meek_theme") || "light";
+        document.documentElement.setAttribute("data-color-mode", theme);
+    </script>
+<meta name="description" content="# 分布式事务框架—— setata
+## 为什么要使用分布式事务框架：
+
+  业务场景： 
+
+![image-20240629182546354](https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40)
+代码实现：
+
+````java
+   @Override
+    @GlobalTransactional // 开启全局事务管理器
+    public Long createOrder(OrderFormDTO orderFormDTO) {
+        // 1.订单数据
+        Order order = new Order();
+        // 1.1.查询商品
+        List<OrderDetailDTO> detailDTOS = orderFormDTO.getDetails();
+        // 1.2.获取商品id和数量的Map
+        Map<Long, Integer> itemNumMap = detailDTOS.stream()
+                .collect(Collectors.toMap(OrderDetailDTO::getItemId, OrderDetailDTO::getNum));
+        Set<Long> itemIds = itemNumMap.keySet();
+        // 1.3.查询商品
+        List<ItemDTO> items = itemClient.queryItemsByIds(itemIds);
+
+        if (items == null || items.size() < itemIds.size()) {
+            throw new BadRequestException('商品不存在');
+        }
+        // 1.4.基于商品价格、购买数量计算商品总价：totalFee
+        int total = 0;
+        for (ItemDTO item : items) {
+            total += item.getPrice() * itemNumMap.get(item.getId());
+        }
+        order.setTotalFee(total);
+        // 1.5.其它属性
+        order.setPaymentType(orderFormDTO.getPaymentType());
+        order.setUserId(UserContext.getUser()); //   登录用户id
+        order.setStatus(1);
+        // 1.6.将Order写入数据库order表中
+        save(order);
+
+        // 2.保存订单详情
+        List<OrderDetail> details = buildDetails(order.getId(), items, itemNumMap);
+        detailService.saveBatch(details);
+
+        // 3.清理购物车商品
+        cartClient.deleteCartItemByIds(itemIds);
+
+        // 4.扣减库存
+        try {
+            itemClient.deductStock(detailDTOS);
+        } catch (Exception e) {
+            throw new RuntimeException('库存不足！');
+        }
+        return order.getId();
+    }
+````
+
+出现问题：清空购物车的业务完成，SQL 语句执行完成已经提交了，到了扣减商品库存的业务出错了，应该整个创建订单的业务都失败了，失败就应该回滚恢复原来的数据，但是清空购物车的业务的SQL语句已经提交不可能回滚了。">
+<meta property="og:title" content="分布式事务框架—— setata">
+<meta property="og:description" content="# 分布式事务框架—— setata
+## 为什么要使用分布式事务框架：
+
+  业务场景： 
+
+![image-20240629182546354](https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40)
+代码实现：
+
+````java
+   @Override
+    @GlobalTransactional // 开启全局事务管理器
+    public Long createOrder(OrderFormDTO orderFormDTO) {
+        // 1.订单数据
+        Order order = new Order();
+        // 1.1.查询商品
+        List<OrderDetailDTO> detailDTOS = orderFormDTO.getDetails();
+        // 1.2.获取商品id和数量的Map
+        Map<Long, Integer> itemNumMap = detailDTOS.stream()
+                .collect(Collectors.toMap(OrderDetailDTO::getItemId, OrderDetailDTO::getNum));
+        Set<Long> itemIds = itemNumMap.keySet();
+        // 1.3.查询商品
+        List<ItemDTO> items = itemClient.queryItemsByIds(itemIds);
+
+        if (items == null || items.size() < itemIds.size()) {
+            throw new BadRequestException('商品不存在');
+        }
+        // 1.4.基于商品价格、购买数量计算商品总价：totalFee
+        int total = 0;
+        for (ItemDTO item : items) {
+            total += item.getPrice() * itemNumMap.get(item.getId());
+        }
+        order.setTotalFee(total);
+        // 1.5.其它属性
+        order.setPaymentType(orderFormDTO.getPaymentType());
+        order.setUserId(UserContext.getUser()); //   登录用户id
+        order.setStatus(1);
+        // 1.6.将Order写入数据库order表中
+        save(order);
+
+        // 2.保存订单详情
+        List<OrderDetail> details = buildDetails(order.getId(), items, itemNumMap);
+        detailService.saveBatch(details);
+
+        // 3.清理购物车商品
+        cartClient.deleteCartItemByIds(itemIds);
+
+        // 4.扣减库存
+        try {
+            itemClient.deductStock(detailDTOS);
+        } catch (Exception e) {
+            throw new RuntimeException('库存不足！');
+        }
+        return order.getId();
+    }
+````
+
+出现问题：清空购物车的业务完成，SQL 语句执行完成已经提交了，到了扣减商品库存的业务出错了，应该整个创建订单的业务都失败了，失败就应该回滚恢复原来的数据，但是清空购物车的业务的SQL语句已经提交不可能回滚了。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://2004GIF.github.io/chenzian-shrimp.github.io/post/fen-bu-shi-shi-wu-kuang-jia-%E2%80%94%E2%80%94%20setata.html">
+<meta property="og:image" content="https://github.githubassets.com/favicons/favicon.svg">
+<title>分布式事务框架—— setata</title>
+<link href="//unpkg.com/@wooorm/starry-night@2.1.1/style/both.css" rel="stylesheet" />
+
+</head>
+<style>
+body{box-sizing: border-box;min-width: 200px;max-width: 900px;margin: 20px auto;padding: 45px;font-size: 16px;font-family: sans-serif;line-height: 1.25;}
+#header{display:flex;padding-bottom:8px;border-bottom: 1px solid var(--borderColor-muted, var(--color-border-muted));margin-bottom: 16px;}
+#footer {margin-top:64px; text-align: center;font-size: small;}
+
+</style>
+
+<style>
+.postTitle{margin: auto 0;font-size:40px;font-weight:bold;}
+.title-right{display:flex;margin:auto 0 0 auto;}
+.title-right .circle{padding: 14px 16px;margin-right:8px;}
+#postBody{border-bottom: 1px solid var(--color-border-default);padding-bottom:36px;}
+#postBody hr{height:2px;}
+#cmButton{height:48px;margin-top:48px;}
+#comments{margin-top:64px;}
+.g-emoji{font-size:24px;}
+@media (max-width: 600px) {
+    body {padding: 8px;}
+    .postTitle{font-size:24px;}
+}
+</style>
+
+
+
+
+<body>
+    <div id="header">
+<h1 class="postTitle">分布式事务框架—— setata</h1>
+<div class="title-right">
+    <a href="https://2004GIF.github.io/chenzian-shrimp.github.io" id="buttonHome" class="btn btn-invisible circle" title="首页">
+        <svg class="octicon" width="16" height="16">
+            <path id="pathHome" fill-rule="evenodd"></path>
+        </svg>
+    </a>
+    
+    <a href="https://github.com/2004GIF/chenzian-shrimp.github.io/issues/5" target="_blank" class="btn btn-invisible circle" title="Issue">
+        <svg class="octicon" width="16" height="16">
+            <path id="pathIssue" fill-rule="evenodd"></path>
+        </svg>
+    </a>
+    
+
+    <a class="btn btn-invisible circle" onclick="modeSwitch();" title="切换主题">
+        <svg class="octicon" width="16" height="16" >
+            <path id="themeSwitch" fill-rule="evenodd"></path>
+        </svg>
+    </a>
+
+</div>
+</div>
+    <div id="content">
+<div class="markdown-body" id="postBody"><h1>分布式事务框架—— setata</h1>
+<h2>为什么要使用分布式事务框架：</h2>
+<p>业务场景：</p>
+<p><a target="_blank" rel="noopener noreferrer" href="https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40"><img src="https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40" alt="image-20240629182546354" style="max-width: 100%;"></a><br>
+代码实现：</p>
+<div class="highlight highlight-source-java"><pre class="notranslate">   <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-c1">@</span><span class="pl-c1">GlobalTransactional</span> <span class="pl-c">// 开启全局事务管理器</span>
+    <span class="pl-k">public</span> <span class="pl-smi">Long</span> <span class="pl-s1">createOrder</span>(<span class="pl-smi">OrderFormDTO</span> <span class="pl-s1">orderFormDTO</span>) {
+        <span class="pl-c">// 1.订单数据</span>
+        <span class="pl-smi">Order</span> <span class="pl-s1">order</span> = <span class="pl-k">new</span> <span class="pl-smi">Order</span>();
+        <span class="pl-c">// 1.1.查询商品</span>
+        <span class="pl-smi">List</span>&lt;<span class="pl-smi">OrderDetailDTO</span>&gt; <span class="pl-s1">detailDTOS</span> = <span class="pl-s1">orderFormDTO</span>.<span class="pl-en">getDetails</span>();
+        <span class="pl-c">// 1.2.获取商品id和数量的Map</span>
+        <span class="pl-smi">Map</span>&lt;<span class="pl-smi">Long</span>, <span class="pl-smi">Integer</span>&gt; <span class="pl-s1">itemNumMap</span> = <span class="pl-s1">detailDTOS</span>.<span class="pl-en">stream</span>()
+                .<span class="pl-en">collect</span>(<span class="pl-smi">Collectors</span>.<span class="pl-en">toMap</span>(<span class="pl-smi">OrderDetailDTO</span>::<span class="pl-s1">getItemId</span>, <span class="pl-smi">OrderDetailDTO</span>::<span class="pl-s1">getNum</span>));
+        <span class="pl-smi">Set</span>&lt;<span class="pl-smi">Long</span>&gt; <span class="pl-s1">itemIds</span> = <span class="pl-s1">itemNumMap</span>.<span class="pl-en">keySet</span>();
+        <span class="pl-c">// 1.3.查询商品</span>
+        <span class="pl-smi">List</span>&lt;<span class="pl-smi">ItemDTO</span>&gt; <span class="pl-s1">items</span> = <span class="pl-s1">itemClient</span>.<span class="pl-en">queryItemsByIds</span>(<span class="pl-s1">itemIds</span>);
+
+        <span class="pl-k">if</span> (<span class="pl-s1">items</span> == <span class="pl-c1">null</span> || <span class="pl-s1">items</span>.<span class="pl-en">size</span>() &lt; <span class="pl-s1">itemIds</span>.<span class="pl-en">size</span>()) {
+            <span class="pl-k">throw</span> <span class="pl-k">new</span> <span class="pl-smi">BadRequestException</span>(<span class="pl-s">"商品不存在"</span>);
+        }
+        <span class="pl-c">// 1.4.基于商品价格、购买数量计算商品总价：totalFee</span>
+        <span class="pl-smi">int</span> <span class="pl-s1">total</span> = <span class="pl-c1">0</span>;
+        <span class="pl-k">for</span> (<span class="pl-smi">ItemDTO</span> <span class="pl-s1">item</span> : <span class="pl-s1">items</span>) {
+            <span class="pl-s1">total</span> += <span class="pl-s1">item</span>.<span class="pl-en">getPrice</span>() * <span class="pl-s1">itemNumMap</span>.<span class="pl-en">get</span>(<span class="pl-s1">item</span>.<span class="pl-en">getId</span>());
+        }
+        <span class="pl-s1">order</span>.<span class="pl-en">setTotalFee</span>(<span class="pl-s1">total</span>);
+        <span class="pl-c">// 1.5.其它属性</span>
+        <span class="pl-s1">order</span>.<span class="pl-en">setPaymentType</span>(<span class="pl-s1">orderFormDTO</span>.<span class="pl-en">getPaymentType</span>());
+        <span class="pl-s1">order</span>.<span class="pl-en">setUserId</span>(<span class="pl-smi">UserContext</span>.<span class="pl-en">getUser</span>()); <span class="pl-c">//   登录用户id</span>
+        <span class="pl-s1">order</span>.<span class="pl-en">setStatus</span>(<span class="pl-c1">1</span>);
+        <span class="pl-c">// 1.6.将Order写入数据库order表中</span>
+        <span class="pl-en">save</span>(<span class="pl-s1">order</span>);
+
+        <span class="pl-c">// 2.保存订单详情</span>
+        <span class="pl-smi">List</span>&lt;<span class="pl-smi">OrderDetail</span>&gt; <span class="pl-s1">details</span> = <span class="pl-en">buildDetails</span>(<span class="pl-s1">order</span>.<span class="pl-en">getId</span>(), <span class="pl-s1">items</span>, <span class="pl-s1">itemNumMap</span>);
+        <span class="pl-s1">detailService</span>.<span class="pl-en">saveBatch</span>(<span class="pl-s1">details</span>);
+
+        <span class="pl-c">// 3.清理购物车商品</span>
+        <span class="pl-s1">cartClient</span>.<span class="pl-en">deleteCartItemByIds</span>(<span class="pl-s1">itemIds</span>);
+
+        <span class="pl-c">// 4.扣减库存</span>
+        <span class="pl-k">try</span> {
+            <span class="pl-s1">itemClient</span>.<span class="pl-en">deductStock</span>(<span class="pl-s1">detailDTOS</span>);
+        } <span class="pl-k">catch</span> (<span class="pl-smi">Exception</span> <span class="pl-s1">e</span>) {
+            <span class="pl-k">throw</span> <span class="pl-k">new</span> <span class="pl-smi">RuntimeException</span>(<span class="pl-s">"库存不足！"</span>);
+        }
+        <span class="pl-k">return</span> <span class="pl-s1">order</span>.<span class="pl-en">getId</span>();
+    }</pre></div>
+<p>出现问题：清空购物车的业务完成，SQL 语句执行完成已经提交了，到了扣减商品库存的业务出错了，应该整个创建订单的业务都失败了，失败就应该回滚恢复原来的数据，但是清空购物车的业务的SQL语句已经提交不可能回滚了。这就导致数据不一致的问题。</p>
+<p>事务并未遵循ACID的原则，归其原因就是参与事务的多个子业务在不同的微服务，跨越了不同的数据库。虽然每个单独的业务都能在本地遵循ACID，但是它们互相之间没有感知，不知道有人失败了，无法保证最终结果的统一，也就无法遵循ACID的事务特性了。</p>
+<p>这就是分布式事务问题，出现以下情况之一就可能产生分布式事务问题：</p>
+<ul>
+<li>业务跨多个服务实现</li>
+<li>业务跨多个数据源实现</li>
+</ul>
+<h2>解决方案利用 seata 框架来进行分布式事务</h2>
+<p>解决分布式事务的方案有很多，但实现起来都比较复杂，因此我们一般会使用开源的框架来解决分布式事务问题。在众多的开源分布式事务框架中，功能最完善、使用最多的就是阿里巴巴在2019年开源的Seata了。</p>
+<p><a href="https://seata.io/zh-cn/docs/overview/what-is-seata.html" rel="nofollow">https://seata.io/zh-cn/docs/overview/what-is-seata.html</a></p>
+<p>其实分布式事务产生的一个重要原因，就是参与事务的多个分支事务互相无感知，不知道彼此的执行状态。因此解决分布式事务的思想非常简单：</p>
+<p>就是找一个统一的<strong>事务协调者</strong>，与多个分支事务通信，检测每个分支事务的执行状态，保证全局事务下的每一个分支事务同时成功或失败即可。大多数的分布式事务框架都是基于这个理论来实现的。</p>
+<p>Seata也不例外，在Seata的事务管理中有三个重要的角色：</p>
+<ul>
+<li><strong>TC</strong> <strong>(Transaction Coordinator) -</strong> **事务协调者：**维护全局和分支事务的状态，协调全局事务提交或回滚。</li>
+<li><strong>TM (Transaction Manager) -</strong> **事务管理器：**定义全局事务的范围、开始全局事务、提交或回滚全局事务。</li>
+<li><strong>RM (Resource Manager) -</strong> **资源管理器：**管理分支事务，与TC交谈以注册分支事务和报告分支事务的状态，并驱动分支事务提交或回滚。</li>
+</ul>
+<p>Seata的工作架构如图所示：</p>
+<p><a target="_blank" rel="noopener noreferrer" href="https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/942caf27-5dd2-41f4-a630-82167edb950d"><img src="https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/942caf27-5dd2-41f4-a630-82167edb950d" alt="image-20240629145542457" style="max-width: 100%;"></a></p>
+<p>其中，<strong>TM</strong>和<strong>RM</strong>可以理解为Seata的客户端部分，引入到参与事务的微服务依赖中即可。将来<strong>TM</strong>和<strong>RM</strong>就会协助微服务，实现本地分支事务与<strong>TC</strong>之间交互，实现事务的提交或回滚。</p>
+<p>而<strong>TC</strong>服务则是事务协调中心，是一个独立的微服务，需要单独部署,部署参考：  <a href="https://b11et3un53m.feishu.cn/wiki/QfVrw3sZvihmnPkmALYcUHIDnff" rel="nofollow">https://b11et3un53m.feishu.cn/wiki/QfVrw3sZvihmnPkmALYcUHIDnff</a></p>
+<h3>使用 seata 步骤</h3>
+<p>以下步骤给每一个需要分布式事务的微服 （ 参与分布式事务的每一个微服务都需要集成Seata）</p>
+<ol>
+<li>
+<p>导入坐标</p>
+<div class="highlight highlight-text-xml"><pre class="notranslate">  <span class="pl-c"><span class="pl-c">&lt;!--</span>seata<span class="pl-c">--&gt;</span></span>
+  &lt;<span class="pl-ent">dependency</span>&gt;
+      &lt;<span class="pl-ent">groupId</span>&gt;com.alibaba.cloud&lt;/<span class="pl-ent">groupId</span>&gt;
+      &lt;<span class="pl-ent">artifactId</span>&gt;spring-cloud-starter-alibaba-seata&lt;/<span class="pl-ent">artifactId</span>&gt;
+  &lt;/<span class="pl-ent">dependency</span>&gt;</pre></div>
+</li>
+<li>
+<p>在每一个需要分布式事务的微服务中</p>
+<div class="highlight highlight-source-yaml"><pre class="notranslate"><span class="pl-ent">seata</span>:
+  <span class="pl-ent">registry</span>: <span class="pl-c"><span class="pl-c">#</span> TC服务注册中心的配置，微服务根据这些信息去注册中心获取tc服务地址</span>
+    <span class="pl-ent">type</span>: <span class="pl-s">nacos </span><span class="pl-c"><span class="pl-c">#</span> 注册中心类型 nacos</span>
+    <span class="pl-ent">nacos</span>:
+      <span class="pl-ent">server-addr</span>: <span class="pl-s">192.168.150.101:8848 </span><span class="pl-c"><span class="pl-c">#</span> nacos地址</span>
+      <span class="pl-ent">namespace</span>: <span class="pl-s"><span class="pl-pds">"</span><span class="pl-pds">"</span></span> <span class="pl-c"><span class="pl-c">#</span> namespace，默认为空</span>
+      <span class="pl-ent">group</span>: <span class="pl-s">DEFAULT_GROUP </span><span class="pl-c"><span class="pl-c">#</span> 分组，默认是DEFAULT_GROUP</span>
+      <span class="pl-ent">application</span>: <span class="pl-s">seata-server </span><span class="pl-c"><span class="pl-c">#</span> seata服务名称</span>
+      <span class="pl-ent">username</span>: <span class="pl-s">nacos</span>
+      <span class="pl-ent">password</span>: <span class="pl-s">nacos</span>
+  <span class="pl-ent">tx-service-group</span>: <span class="pl-s">hmall </span><span class="pl-c"><span class="pl-c">#</span> 事务组名称</span>
+  <span class="pl-ent">service</span>:
+    <span class="pl-ent">vgroup-mapping</span>: <span class="pl-c"><span class="pl-c">#</span> 事务组与tc集群的映射关系</span>
+      <span class="pl-ent">hmall</span>: <span class="pl-s"><span class="pl-pds">"</span>default<span class="pl-pds">"</span></span></pre></div>
+</li>
+<li>
+<p>选择解决分布式事务的模式</p>
+</li>
+</ol>
+<p>​	Seata支持四种不同的分布式事务解决方案：</p>
+<ul>
+<li><strong>XA</strong></li>
+<li><strong>TCC</strong></li>
+<li><strong>AT</strong></li>
+<li><strong>SAGA</strong></li>
+</ul>
+<p>这里我们以<code class="notranslate">XA</code>模式和<code class="notranslate">AT</code>模式来给大家讲解其实现原理。</p>
+<p><code class="notranslate">XA</code> 规范 是<code class="notranslate"> X/Open</code> 组织定义的分布式事务处理（DTP，Distributed Transaction Processing）标准，XA 规范 描述了全局的<code class="notranslate">TM</code>与局部的<code class="notranslate">RM</code>之间的接口，几乎所有主流的数据库都对 XA 规范 提供了支持。</p>
+<h3>2.4.1.两阶段提交</h3>
+<p>XA是规范，目前主流数据库都实现了这种规范，实现的原理都是基于两阶段提交。</p>
+<p>正常情况：</p>
+<p><a target="_blank" rel="noopener noreferrer nofollow" href="https://camo.githubusercontent.com/ffc6743e59c0fa75ae7d71a36ce02c0e3082aac148a037ff2f942ab920316e6d/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d4f445932596a5a685a6a67354f4467774d7a59784d5463784d3251324d5749324e7a67795a6a42694f446c665347743563466c56596a6c5954586875566c704553584a51634452425747395456554979596d6c4854324e66564739725a573436526b5a68536d4a5a4f56427962315631646d4e3463304e4c64324d776548704e626e6f34587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41"><img src="https://camo.githubusercontent.com/ffc6743e59c0fa75ae7d71a36ce02c0e3082aac148a037ff2f942ab920316e6d/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d4f445932596a5a685a6a67354f4467774d7a59784d5463784d3251324d5749324e7a67795a6a42694f446c665347743563466c56596a6c5954586875566c704553584a51634452425747395456554979596d6c4854324e66564739725a573436526b5a68536d4a5a4f56427962315631646d4e3463304e4c64324d776548704e626e6f34587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41" alt="img" data-canonical-src="https://b11et3un53m.feishu.cn/space/api/box/stream/download/asynccode/?code=ODY2YjZhZjg5ODgwMzYxMTcxM2Q2MWI2NzgyZjBiODlfSGt5cFlVYjlYTXhuVlpESXJQcDRBWG9TVUIyYmlHT2NfVG9rZW46RkZhSmJZOVByb1V1dmN4c0NLd2MweHpNbno4XzE3MTk2NTc2ODc6MTcxOTY2MTI4N19WNA" style="max-width: 100%;"></a></p>
+<p>异常情况：</p>
+<p><a target="_blank" rel="noopener noreferrer nofollow" href="https://camo.githubusercontent.com/6d2914ab231967e246cfe97db0d98561cd86743712b28e6206767946c422fb3a/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d4d7a59354d7a49784d3249305a4441334d47566d59544d7a4e4445784d446b785a44453559545133596a686651564d3154556470566e70794d6e645a546c7056644870694d44425a556d563353564a4e656c4a525a444e66564739725a5734365230525963474a4b5333425762336b7a524756344d47644f54474e6c57556444626d6c6d587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41"><img src="https://camo.githubusercontent.com/6d2914ab231967e246cfe97db0d98561cd86743712b28e6206767946c422fb3a/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d4d7a59354d7a49784d3249305a4441334d47566d59544d7a4e4445784d446b785a44453559545133596a686651564d3154556470566e70794d6e645a546c7056644870694d44425a556d563353564a4e656c4a525a444e66564739725a5734365230525963474a4b5333425762336b7a524756344d47644f54474e6c57556444626d6c6d587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41" alt="img" data-canonical-src="https://b11et3un53m.feishu.cn/space/api/box/stream/download/asynccode/?code=MzY5MzIxM2I0ZDA3MGVmYTMzNDExMDkxZDE5YTQ3YjhfQVM1TUdpVnpyMndZTlpVdHpiMDBZUmV3SVJNelJRZDNfVG9rZW46R0RYcGJKS3BWb3kzRGV4MGdOTGNlWUdDbmlmXzE3MTk2NTc2ODc6MTcxOTY2MTI4N19WNA" style="max-width: 100%;"></a></p>
+<p>一阶段：</p>
+<ul>
+<li>事务协调者通知每个事务参与者执行本地事务</li>
+<li>本地事务执行完成后报告事务执行状态给事务协调者，此时事务不提交，继续持有数据库锁</li>
+</ul>
+<p>二阶段：</p>
+<ul>
+<li>事务协调者基于一阶段的报告来判断下一步操作</li>
+<li>如果一阶段都成功，则通知所有事务参与者，提交事务</li>
+<li>如果一阶段任意一个参与者失败，则通知所有事务参与者回滚事务</li>
+</ul>
+<h3>2.4.2.Seata的XA模型</h3>
+<p>Seata对原始的XA模式做了简单的封装和改造，以适应自己的事务模型，基本架构如图：</p>
+<p><a target="_blank" rel="noopener noreferrer nofollow" href="https://camo.githubusercontent.com/a80fe2f64d4d50f8bfda1ba69a0d527755d27e9550f2e31780bc2e4831e01bdd/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d4e7a4a685a546b774e4755324d6a51784d4451795a6a51774d475a6d596d497a5a6a646a4e324d3259324e6662307054567a645555584231537a686c53474e59526b74484d7a68565a334642565670305a33707157475a66564739725a573436566d4643656d4933636e4d776232347951324e3456334a50566d4e4e4e6c685a626a4e6e587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41"><img src="https://camo.githubusercontent.com/a80fe2f64d4d50f8bfda1ba69a0d527755d27e9550f2e31780bc2e4831e01bdd/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d4e7a4a685a546b774e4755324d6a51784d4451795a6a51774d475a6d596d497a5a6a646a4e324d3259324e6662307054567a645555584231537a686c53474e59526b74484d7a68565a334642565670305a33707157475a66564739725a573436566d4643656d4933636e4d776232347951324e3456334a50566d4e4e4e6c685a626a4e6e587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41" alt="img" data-canonical-src="https://b11et3un53m.feishu.cn/space/api/box/stream/download/asynccode/?code=NzJhZTkwNGU2MjQxMDQyZjQwMGZmYmIzZjdjN2M2Y2Nfb0pTVzdUUXB1SzhlSGNYRktHMzhVZ3FBVVp0Z3pqWGZfVG9rZW46VmFCemI3cnMwb24yQ2N4V3JPVmNNNlhZbjNnXzE3MTk2NTc2ODc6MTcxOTY2MTI4N19WNA" style="max-width: 100%;"></a></p>
+<p><code class="notranslate">RM</code>一阶段的工作：</p>
+<ol>
+<li>注册分支事务到<code class="notranslate">TC</code></li>
+<li>执行分支业务sql但不提交</li>
+<li>报告执行状态到<code class="notranslate">TC</code></li>
+</ol>
+<p><code class="notranslate">TC</code>二阶段的工作：</p>
+<ol>
+<li><code class="notranslate">TC</code>检测各分支事务执行状态</li>
+<li>如果都成功，通知所有RM提交事务</li>
+<li>如果有失败，通知所有RM回滚事务</li>
+</ol>
+<p><code class="notranslate">RM</code>二阶段的工作：</p>
+<ul>
+<li>接收<code class="notranslate">TC</code>指令，提交或回滚事务</li>
+</ul>
+<h3>2.4.3.优缺点</h3>
+<p><code class="notranslate">XA</code>模式的优点是什么？</p>
+<ul>
+<li>事务的强一致性，满足ACID原则</li>
+<li>常用数据库都支持，实现简单，并且没有代码侵入</li>
+</ul>
+<p><code class="notranslate">XA</code>模式的缺点是什么？</p>
+<ul>
+<li>因为一阶段需要锁定数据库资源，等待二阶段结束才释放，性能较差</li>
+<li>依赖关系型数据库实现事务</li>
+</ul>
+<h3>2.4.4.实现步骤</h3>
+<p>首先，我们要在配置文件中指定要采用的分布式事务模式。我们可以在Nacos中的共享shared-seata.yaml配置文件中设置：</p>
+<div class="highlight highlight-source-yaml"><pre class="notranslate"><span class="pl-ent">seata</span>:
+  <span class="pl-ent">data-source-proxy-mode</span>: <span class="pl-s">XA</span></pre></div>
+<p>其次，我们要利用<code class="notranslate">@GlobalTransactional</code>标记分布式事务的入口方法：</p>
+<p><a target="_blank" rel="noopener noreferrer nofollow" href="https://camo.githubusercontent.com/fcb00de0a61ee6d900334960301140fb752cf2ab02deb8e838145658d47088b3/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d5a54646959325530595463344f44493459544e6b5a5759314e4749304e324d31595759775a6d526a4e6d4a66656d45314e31647a6357383257464e5261323033556b5254626a42495931705a646e5648576c497756473166564739725a5734365657314e4d6d4a3652575a51623268616445683462454d3061324e5061314d32626c5a6f587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41"><img src="https://camo.githubusercontent.com/fcb00de0a61ee6d900334960301140fb752cf2ab02deb8e838145658d47088b3/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d5a54646959325530595463344f44493459544e6b5a5759314e4749304e324d31595759775a6d526a4e6d4a66656d45314e31647a6357383257464e5261323033556b5254626a42495931705a646e5648576c497756473166564739725a5734365657314e4d6d4a3652575a51623268616445683462454d3061324e5061314d32626c5a6f587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41" alt="img" data-canonical-src="https://b11et3un53m.feishu.cn/space/api/box/stream/download/asynccode/?code=ZTdiY2U0YTc4ODI4YTNkZWY1NGI0N2M1YWYwZmRjNmJfemE1N1dzcW82WFNRa203UkRTbjBIY1pZdnVHWlIwVG1fVG9rZW46VW1NMmJ6RWZQb2hadEh4bEM0a2NPa1M2blZoXzE3MTk2NTc2ODc6MTcxOTY2MTI4N19WNA" style="max-width: 100%;"></a></p>
+<h2>2.5.AT模式</h2>
+<p><code class="notranslate">AT</code>模式同样是分阶段提交的事务模型，不过缺弥补了<code class="notranslate">XA</code>模型中资源锁定周期过长的缺陷。</p>
+<h3>2.5.1.Seata的AT模型</h3>
+<p>基本流程图：</p>
+<p><a target="_blank" rel="noopener noreferrer nofollow" href="https://camo.githubusercontent.com/a583d71b31958009673aa8a4f2fd435cc9ea4207f4952ec438d855bece26d974/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d4d4746684d545977595445334e44466c5a6a4e6c4e54557a4d544e685a474e6b4d7a4930596a646a5954646655576873554456365a557077646c566861445a7a54545a334e564a70566b397963473156516d784f53485666564739725a5734365131685263574a3153554e3262304932595670344d5546534d324e6b53307450626b3569587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41"><img src="https://camo.githubusercontent.com/a583d71b31958009673aa8a4f2fd435cc9ea4207f4952ec438d855bece26d974/68747470733a2f2f623131657433756e35336d2e6665697368752e636e2f73706163652f6170692f626f782f73747265616d2f646f776e6c6f61642f6173796e63636f64652f3f636f64653d4d4746684d545977595445334e44466c5a6a4e6c4e54557a4d544e685a474e6b4d7a4930596a646a5954646655576873554456365a557077646c566861445a7a54545a334e564a70566b397963473156516d784f53485666564739725a5734365131685263574a3153554e3262304932595670344d5546534d324e6b53307450626b3569587a45334d546b324e5463324f4463364d5463784f5459324d5449344e3139574e41" alt="img" data-canonical-src="https://b11et3un53m.feishu.cn/space/api/box/stream/download/asynccode/?code=MGFhMTYwYTE3NDFlZjNlNTUzMTNhZGNkMzI0YjdjYTdfUWhsUDV6ZUpwdlVhaDZzTTZ3NVJpVk9ycG1VQmxOSHVfVG9rZW46Q1hRcWJ1SUN2b0I2YVp4MUFSM2NkS0tPbk5iXzE3MTk2NTc2ODc6MTcxOTY2MTI4N19WNA" style="max-width: 100%;"></a></p>
+<p>阶段一<code class="notranslate">RM</code>的工作：</p>
+<ul>
+<li>注册分支事务</li>
+<li>记录undo-log（数据快照）</li>
+<li>执行业务sql并提交</li>
+<li>报告事务状态</li>
+</ul>
+<p>阶段二提交时<code class="notranslate">RM</code>的工作：</p>
+<ul>
+<li>删除undo-log即可</li>
+</ul>
+<p>阶段二回滚时<code class="notranslate">RM</code>的工作：</p>
+<ul>
+<li>根据undo-log恢复数据到更新前</li>
+</ul>
+<h3>2.5.3.AT与XA的区别</h3>
+<p>简述<code class="notranslate">AT</code>模式与<code class="notranslate">XA</code>模式最大的区别是什么？</p>
+<ul>
+<li><code class="notranslate">XA</code>模式一阶段不提交事务，锁定资源；<code class="notranslate">AT</code>模式一阶段直接提交，不锁定资源。</li>
+<li><code class="notranslate">XA</code>模式依赖数据库机制实现回滚；<code class="notranslate">AT</code>模式利用数据快照实现数据回滚。</li>
+<li><code class="notranslate">XA</code>模式强一致；<code class="notranslate">AT</code>模式最终一致</li>
+</ul>
+<p>可见，AT模式使用起来更加简单，无业务侵入，性能更好。因此企业90%的分布式事务都可以用AT模式来解决。</p></div>
+<div style="font-size:small;margin-top:8px;float:right;"></div>
+<button class="btn btn-block" type="button" onclick="openComments()" id="cmButton">评论</button>
+<div class="comments" id="comments"></div>
+</div>
+    <div id="footer">Copyright © <span id="year"></span><a href="https://2004GIF.github.io/chenzian-shrimp.github.io"> 陈子安个人博客 </a>
+<p>
+<span id="runday"></span>Powered by <a href="https://meekdai.com/Gmeek.html" target="_blank">Gmeek</a>
+</p>
+
+<script>
+if(""!=""){
+    var now=new Date();
+    var startSite=new Date("");
+    var diff=now.getTime()-startSite.getTime();
+    var diffDay=Math.floor(diff/(1000*60*60*24));
+    document.getElementById("year").innerHTML=now.getFullYear();
+    if(""!=""){document.getElementById("runday").innerHTML=" • "+"网站运行"+diffDay+"天"+" • ";}
+    else{document.getElementById("runday").innerHTML="网站运行"+diffDay+"天"+" • ";}
+}
+</script>
+</div>
+</body>
+<script>
+var IconList={'sun': 'M8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM8 12a4 4 0 100-8 4 4 0 000 8zM8 0a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0V.75A.75.75 0 018 0zm0 13a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 018 13zM2.343 2.343a.75.75 0 011.061 0l1.06 1.061a.75.75 0 01-1.06 1.06l-1.06-1.06a.75.75 0 010-1.06zm9.193 9.193a.75.75 0 011.06 0l1.061 1.06a.75.75 0 01-1.06 1.061l-1.061-1.06a.75.75 0 010-1.061zM16 8a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 0116 8zM3 8a.75.75 0 01-.75.75H.75a.75.75 0 010-1.5h1.5A.75.75 0 013 8zm10.657-5.657a.75.75 0 010 1.061l-1.061 1.06a.75.75 0 11-1.06-1.06l1.06-1.06a.75.75 0 011.06 0zm-9.193 9.193a.75.75 0 010 1.06l-1.06 1.061a.75.75 0 11-1.061-1.06l1.06-1.061a.75.75 0 011.061 0z', 'moon': 'M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786zm1.616 1.945a7 7 0 01-7.678 7.678 5.5 5.5 0 107.678-7.678z', 'sync': 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z', 'home': 'M6.906.664a1.749 1.749 0 0 1 2.187 0l5.25 4.2c.415.332.657.835.657 1.367v7.019A1.75 1.75 0 0 1 13.25 15h-3.5a.75.75 0 0 1-.75-.75V9H7v5.25a.75.75 0 0 1-.75.75h-3.5A1.75 1.75 0 0 1 1 13.25V6.23c0-.531.242-1.034.657-1.366l5.25-4.2Zm1.25 1.171a.25.25 0 0 0-.312 0l-5.25 4.2a.25.25 0 0 0-.094.196v7.019c0 .138.112.25.25.25H5.5V8.25a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 .75.75v5.25h2.75a.25.25 0 0 0 .25-.25V6.23a.25.25 0 0 0-.094-.195Z', 'github': 'M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z'};
+var utterancesLoad=0;
+
+let themeSettings={
+    "dark": ["dark","moon","#00f0ff","dark-blue"],
+    "light": ["light","sun","#ff5000","github-light"],
+    "auto": ["auto","sync","","preferred-color-scheme"]
+};
+function changeTheme(mode, icon, color, utheme){
+    document.documentElement.setAttribute("data-color-mode",mode);
+    document.getElementById("themeSwitch").setAttribute("d",value=IconList[icon]);
+    document.getElementById("themeSwitch").parentNode.style.color=color;
+    if(utterancesLoad==1){utterancesTheme(utheme);}
+}
+function modeSwitch(){
+    let currentMode=document.documentElement.getAttribute('data-color-mode');
+    let newMode = currentMode === "light" ? "dark" : currentMode === "dark" ? "auto" : "light";
+    localStorage.setItem("meek_theme", newMode);
+    if(themeSettings[newMode]){
+        changeTheme(...themeSettings[newMode]);
+    }
+}
+function utterancesTheme(theme){
+    const message={type:'set-theme',theme: theme};
+    const iframe=document.getElementsByClassName('utterances-frame')[0];
+    iframe.contentWindow.postMessage(message,'https://utteranc.es');
+}
+if(themeSettings[theme]){changeTheme(...themeSettings[theme]);}
+console.log("\n %c Gmeek last https://github.com/Meekdai/Gmeek \n\n","padding:5px 0;background:#02d81d;color:#fff");
+</script>
+
+<script>
+document.getElementById("pathHome").setAttribute("d",IconList["home"]);
+document.getElementById("pathIssue").setAttribute("d",IconList["github"]);
+
+function openComments(){
+    cm=document.getElementById("comments");
+    cmButton=document.getElementById("cmButton");
+    cmButton.innerHTML="loading";
+    span=document.createElement("span");
+    span.setAttribute("class","AnimatedEllipsis");
+    cmButton.appendChild(span);
+
+    script=document.createElement("script");
+    script.setAttribute("src","https://utteranc.es/client.js");
+    script.setAttribute("repo","2004GIF/chenzian-shrimp.github.io");
+    script.setAttribute("issue-term","title");
+    
+    if(localStorage.getItem("meek_theme")=="dark"){script.setAttribute("theme","dark-blue");}
+    else if(localStorage.getItem("meek_theme")=="light") {script.setAttribute("theme","github-light");}
+    else{script.setAttribute("theme","preferred-color-scheme");}
+    
+    script.setAttribute("crossorigin","anonymous");
+    script.setAttribute("async","");
+    cm.appendChild(script);
+
+    int=self.setInterval("iFrameLoading()",200);
+}
+
+function iFrameLoading(){
+    var utterances=document.getElementsByClassName('utterances');
+    if(utterances.length==1){
+        if(utterances[0].style.height!=""){
+            utterancesLoad=1;
+            int=window.clearInterval(int);
+            document.getElementById("cmButton").style.display="none";
+            console.log("utterances Load OK");
+        }
+    }
+}
+</script>
+
+
+</html>
