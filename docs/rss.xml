@@ -1,5 +1,11 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0"><channel><title>陈子安个人博客</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io</link><description>每日分享</description><copyright>陈子安个人博客</copyright><docs>http://www.rssboard.org/rss-specification</docs><generator>python-feedgen</generator><image><url>https://github.githubassets.com/favicons/favicon.svg</url><title>avatar</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io</link></image><lastBuildDate>Fri, 28 Jun 2024 12:03:11 +0000</lastBuildDate><managingEditor>陈子安个人博客</managingEditor><ttl>60</ttl><webMaster>陈子安个人博客</webMaster><item><title>网关-动态路由</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io/post/wang-guan---dong-tai-lu-you.html</link><description># 网关-动态路由&#13;
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0"><channel><title>陈子安个人博客</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io</link><description>每日分享</description><copyright>陈子安个人博客</copyright><docs>http://www.rssboard.org/rss-specification</docs><generator>python-feedgen</generator><image><url>https://github.githubassets.com/favicons/favicon.svg</url><title>avatar</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io</link></image><lastBuildDate>Sat, 29 Jun 2024 02:51:55 +0000</lastBuildDate><managingEditor>陈子安个人博客</managingEditor><ttl>60</ttl><webMaster>陈子安个人博客</webMaster><item><title>微服务保护 —— Sentinel</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io/post/wei-fu-wu-bao-hu-%20%E2%80%94%E2%80%94%20Sentinel.html</link><description># 微服务保护 —— Sentinel&#13;
+## 限流（微服务提供者）&#13;
+作用：控制访问微服务的 QPS 数量&#13;
+实现方式直接在 sentinel 控制台中给对应的簇点添加流控规则设置 QPS 即可&#13;
+&#13;
+## 线程隔离（Thread Isolation）&#13;
+   - **定义**：线程隔离在Sentinel中通常是通过并发线程数控制实现的。</description><guid isPermaLink="true">https://2004GIF.github.io/chenzian-shrimp.github.io/post/wei-fu-wu-bao-hu-%20%E2%80%94%E2%80%94%20Sentinel.html</guid><pubDate>Sat, 29 Jun 2024 02:51:30 +0000</pubDate></item><item><title>网关-动态路由</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io/post/wang-guan---dong-tai-lu-you.html</link><description># 网关-动态路由&#13;
 实现思路：&#13;
 1. 监听nacos配置文件&#13;
 2. 更新网关的路由表&#13;
