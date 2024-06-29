@@ -1,6 +1,4 @@
 # 分布式事务框架—— setata
-## 为什么要使用分布式事务框架：
-
   业务场景： 
 
 ![image-20240629182546354](https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40)

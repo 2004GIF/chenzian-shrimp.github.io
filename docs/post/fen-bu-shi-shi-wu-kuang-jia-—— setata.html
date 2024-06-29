@@ -10,8 +10,6 @@
         document.documentElement.setAttribute("data-color-mode", theme);
     </script>
 <meta name="description" content="# 分布式事务框架—— setata
-## 为什么要使用分布式事务框架：
-
   业务场景： 
 
 ![image-20240629182546354](https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40)
@@ -68,8 +66,6 @@
 出现问题：清空购物车的业务完成，SQL 语句执行完成已经提交了，到了扣减商品库存的业务出错了，应该整个创建订单的业务都失败了，失败就应该回滚恢复原来的数据，但是清空购物车的业务的SQL语句已经提交不可能回滚了。">
 <meta property="og:title" content="分布式事务框架—— setata">
 <meta property="og:description" content="# 分布式事务框架—— setata
-## 为什么要使用分布式事务框架：
-
   业务场景： 
 
 ![image-20240629182546354](https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40)
@@ -183,7 +179,6 @@ body{box-sizing: border-box;min-width: 200px;max-width: 900px;margin: 20px auto;
 </div>
     <div id="content">
 <div class="markdown-body" id="postBody"><h1>分布式事务框架—— setata</h1>
-<h2>为什么要使用分布式事务框架：</h2>
 <p>业务场景：</p>
 <p><a target="_blank" rel="noopener noreferrer" href="https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40"><img src="https://github.com/2004GIF/chenzian-shrimp.github.io/assets/126451952/8790679a-6ba1-45c3-882c-fd84121a1f40" alt="image-20240629182546354" style="max-width: 100%;"></a><br>
 代码实现：</p>
