@@ -1,4 +1,3 @@
-# MQ
 MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。在分布式系统中，MQ通常用于解耦不同的服务或组件，提高系统的可伸缩性和可靠性。以下是MQ的一些核心概念：
 
 - 消息（Message）：消息是MQ中传递的数据单元，它可以是任何类型的数据，通常包含一个负载（payload）和一组属性，如优先级、类型、目的地等。
@@ -29,7 +28,6 @@ RabbitMQ中有几种不同类型的交换机，它们各自有不同的路由策
 - 直连交换机（Direct Exchange）：这种交换机会将消息路由到那些绑定键（binding key）与消息的路由键（routing key）完全匹配的队列。它是基于精确匹配的路由。
 
 - 主题交换机（Topic Exchange）：这种交换机允许消息根据路由键的模式进行路由。绑定键可以包含特殊字符*（匹配一个单词）和#（匹配零个或多个单词）。它适用于根据特定模式路由消息的场景。
-头交换机（Headers Exchange）：这种交换机使用消息的头部属性（headers）来路由消息，而不是路由键。队列可以根据消息的头部属性进行绑定。
 
 #### Fanout 交换机
 Fanout 是RabbbitMQ 交换机的一种类型，特点：
@@ -119,7 +117,7 @@ key       String | List<String> 设置 BindingKey
             key = {"bindingKey", "bindingKey"}
     ))
     public void onDirect2Msg2(String msg) {....}
-```
+````
 
 ### 消息转换器
 消息转换器其实就是 Java 对象序列化成字节数组、反序列化将字节数组转换为 Java 对象

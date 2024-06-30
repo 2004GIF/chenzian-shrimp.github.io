@@ -9,11 +9,9 @@
         let theme = localStorage.getItem("meek_theme") || "light";
         document.documentElement.setAttribute("data-color-mode", theme);
     </script>
-<meta name="description" content="# MQ
-MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。">
+<meta name="description" content="MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。">
 <meta property="og:title" content="消息队列--Rabbbit ">
-<meta property="og:description" content="# MQ
-MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。">
+<meta property="og:description" content="MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://2004GIF.github.io/chenzian-shrimp.github.io/post/xiao-xi-dui-lie---Rabbbit%20.html">
 <meta property="og:image" content="https://github.githubassets.com/favicons/favicon.svg">
@@ -72,8 +70,7 @@ body{box-sizing: border-box;min-width: 200px;max-width: 900px;margin: 20px auto;
 </div>
 </div>
     <div id="content">
-<div class="markdown-body" id="postBody"><h1>MQ</h1>
-<p>MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。在分布式系统中，MQ通常用于解耦不同的服务或组件，提高系统的可伸缩性和可靠性。以下是MQ的一些核心概念：</p>
+<div class="markdown-body" id="postBody"><p>MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。在分布式系统中，MQ通常用于解耦不同的服务或组件，提高系统的可伸缩性和可靠性。以下是MQ的一些核心概念：</p>
 <ul>
 <li>消息（Message）：消息是MQ中传递的数据单元，它可以是任何类型的数据，通常包含一个负载（payload）和一组属性，如优先级、类型、目的地等。</li>
 <li>队列（Queue）：队列是存储消息的容器，按照先进先出（FIFO）的原则管理消息。生产者将消息发送到队列，消费者从队列中接收消息。</li>
@@ -104,8 +101,7 @@ body{box-sizing: border-box;min-width: 200px;max-width: 900px;margin: 20px auto;
 <p>直连交换机（Direct Exchange）：这种交换机会将消息路由到那些绑定键（binding key）与消息的路由键（routing key）完全匹配的队列。它是基于精确匹配的路由。</p>
 </li>
 <li>
-<p>主题交换机（Topic Exchange）：这种交换机允许消息根据路由键的模式进行路由。绑定键可以包含特殊字符*（匹配一个单词）和#（匹配零个或多个单词）。它适用于根据特定模式路由消息的场景。<br>
-头交换机（Headers Exchange）：这种交换机使用消息的头部属性（headers）来路由消息，而不是路由键。队列可以根据消息的头部属性进行绑定。</p>
+<p>主题交换机（Topic Exchange）：这种交换机允许消息根据路由键的模式进行路由。绑定键可以包含特殊字符*（匹配一个单词）和#（匹配零个或多个单词）。它适用于根据特定模式路由消息的场景。</p>
 </li>
 </ul>
 <h4>Fanout 交换机</h4>
@@ -192,23 +188,24 @@ body{box-sizing: border-box;min-width: 200px;max-width: 900px;margin: 20px auto;
             <span class="pl-s1">exchange</span> = <span class="pl-c1">@</span><span class="pl-c1">Exchange</span>(<span class="pl-s1">name</span> = <span class="pl-s">"交换机名"</span> ,<span class="pl-s1">type</span> = <span class="pl-smi">ExchangeTypes</span>.<span class="pl-c1">DIRECT</span> ),
             <span class="pl-s1">key</span> = {<span class="pl-s">"bindingKey"</span>, <span class="pl-s">"bindingKey"</span>}
     ))
-    <span class="pl-k">public</span> <span class="pl-smi">void</span> <span class="pl-s1">onDirect2Msg2</span>(<span class="pl-s1">String</span> <span class="pl-s1">msg</span>) {....}
-```
-
-### 消息转换器
-消息转换器其实就是 <span class="pl-s1">Java</span> 对象序列化成字节数组、反序列化将字节数组转换为 <span class="pl-s1">Java</span> 对象
-在 <span class="pl-s1">RabbitMQ</span> 底层使用 <span class="pl-c1">JDK</span> 默认的消息转换器，使用默认的消息转换器有<span class="pl-s1">一</span>些问题：
-- 数据体积过大
-- 有安全漏洞
-- 可读性差
-更为为 <span class="pl-s1">Jackson2JsonMessageConverter</span> 消息转换器 （ 将<span class="pl-s1">Java</span>对象转换为字节数组，然后解析成 <span class="pl-s1">json</span> 格式 ）
-步骤：
-<span class="pl-c1">1.</span> 导入 <span class="pl-s1">JackJson</span> 坐标
-```<span class="pl-s1">xml</span>
-&lt;<span class="pl-s1">dependency</span>&gt;
-    &lt;<span class="pl-s1">groupId</span>&gt;<span class="pl-s1">com</span>.<span class="pl-s1">fasterxml</span>.<span class="pl-s1">jackson</span>.<span class="pl-s1">core</span>&lt;/<span class="pl-s1">groupId</span>&gt;
-    &lt;<span class="pl-s1">artifactId</span>&gt;<span class="pl-s1">jackson</span>-<span class="pl-s1">databind</span>&lt;/<span class="pl-s1">artifactId</span>&gt;
-&lt;/<span class="pl-s1">dependency</span>&gt;</pre></div>
+    <span class="pl-k">public</span> <span class="pl-smi">void</span> <span class="pl-s1">onDirect2Msg2</span>(<span class="pl-s1">String</span> <span class="pl-s1">msg</span>) {....}</pre></div>
+<h3>消息转换器</h3>
+<p>消息转换器其实就是 Java 对象序列化成字节数组、反序列化将字节数组转换为 Java 对象<br>
+在 RabbitMQ 底层使用 JDK 默认的消息转换器，使用默认的消息转换器有一些问题：</p>
+<ul>
+<li>数据体积过大</li>
+<li>有安全漏洞</li>
+<li>可读性差<br>
+更为为 Jackson2JsonMessageConverter 消息转换器 （ 将Java对象转换为字节数组，然后解析成 json 格式 ）<br>
+步骤：</li>
+</ul>
+<ol>
+<li>导入 JackJson 坐标</li>
+</ol>
+<div class="highlight highlight-text-xml"><pre class="notranslate">&lt;<span class="pl-ent">dependency</span>&gt;
+    &lt;<span class="pl-ent">groupId</span>&gt;com.fasterxml.jackson.core&lt;/<span class="pl-ent">groupId</span>&gt;
+    &lt;<span class="pl-ent">artifactId</span>&gt;jackson-databind&lt;/<span class="pl-ent">artifactId</span>&gt;
+&lt;/<span class="pl-ent">dependency</span>&gt;</pre></div>
 <ol start="2">
 <li>将 Jackson2JsonMessageConverter  注入到 IOC 容器中，RabbitMQ 底层就会自动使用这个消息转换器了</li>
 </ol>
