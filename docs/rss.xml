@@ -1,5 +1,26 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0"><channel><title>陈子安个人博客</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io</link><description>每日分享</description><copyright>陈子安个人博客</copyright><docs>http://www.rssboard.org/rss-specification</docs><generator>python-feedgen</generator><image><url>https://github.githubassets.com/favicons/favicon.svg</url><title>avatar</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io</link></image><lastBuildDate>Sun, 30 Jun 2024 08:55:16 +0000</lastBuildDate><managingEditor>陈子安个人博客</managingEditor><ttl>60</ttl><webMaster>陈子安个人博客</webMaster><item><title>消息队列--Rabbbit </title><link>https://2004GIF.github.io/chenzian-shrimp.github.io/post/xiao-xi-dui-lie---Rabbbit%20.html</link><description>MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。</description><guid isPermaLink="true">https://2004GIF.github.io/chenzian-shrimp.github.io/post/xiao-xi-dui-lie---Rabbbit%20.html</guid><pubDate>Sun, 30 Jun 2024 08:51:10 +0000</pubDate></item><item><title>服务保护和分布式事务</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io/post/fu-wu-bao-hu-he-fen-bu-shi-shi-wu.html</link><description># 服务保护&#13;
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0"><channel><title>陈子安个人博客</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io</link><description>每日分享</description><copyright>陈子安个人博客</copyright><docs>http://www.rssboard.org/rss-specification</docs><generator>python-feedgen</generator><image><url>https://github.githubassets.com/favicons/favicon.svg</url><title>avatar</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io</link></image><lastBuildDate>Mon, 01 Jul 2024 14:38:01 +0000</lastBuildDate><managingEditor>陈子安个人博客</managingEditor><ttl>60</ttl><webMaster>陈子安个人博客</webMaster><item><title>MQ 高级</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io/post/MQ%20-gao-ji.html</link><description>1. 生产者确认机制&#13;
+   1. 生产者重试 ----&gt; 确保生产者能够连接到 mq 上&#13;
+   2. 生产者确认 ----&gt; 确保信息发送 mq 上&#13;
+      1. `Publisher Confirm` 消费者确定 -----&gt; 确保消息发送到 mq 的exchange 上&#13;
+      2. `Publisher Return`    消费者回退 -----&gt; 确保信息从 exchange 到 queue 上&#13;
+2. 消息持久化&#13;
+   1. 在 `SpringAMQP`  中生产者发送的消息都是持久化的&#13;
+   2. 优化将 消息的队列设置 `Lazy Qqueue` 队列可以确保消息持久化的同时提供mq 的性能&#13;
+3. 消费者确认机制&#13;
+   1. 消费者重试机制  ---&gt; 只有当消费者给mq放回 ack 的时候mq才将队列的消息删除&#13;
+   2. 失败重试处理机制 ---&gt;  当消费者的重试机制的耗尽后对消息的处理&#13;
+4. 业务幂等：一个业务一次处理或者多次处理最终的效果都是一样的，实现方法：&#13;
+   1. 给每一个消息设置一个唯一的 id ，在执行业务代码前查询数据库是否存在该消息id，不存在  处理完业务将id存储到数据库中 ， 存在，忽略消息即可&#13;
+   2. 在一些有状态的业务上可以通过判断状态来，决定是否执行该业务&#13;
+5. 兜底方案&#13;
+   1.  延迟信息，生产者发送消息到 mq ， 消费不立即消费实现&#13;
+       1. 死信交换机 &#13;
+       2. 使用插件，将交换机修改为可以临时存储消息的交换机&#13;
+  2. 这方案一般用于一些需要有超时取消机制的业务&#13;
+   &#13;
+&#13;
+。</description><guid isPermaLink="true">https://2004GIF.github.io/chenzian-shrimp.github.io/post/MQ%20-gao-ji.html</guid><pubDate>Mon, 01 Jul 2024 14:37:25 +0000</pubDate></item><item><title>消息队列--Rabbbit </title><link>https://2004GIF.github.io/chenzian-shrimp.github.io/post/xiao-xi-dui-lie---Rabbbit%20.html</link><description>MQ（Message Queue）是一种消息队列技术，它允许应用程序通过队列来异步交换消息。</description><guid isPermaLink="true">https://2004GIF.github.io/chenzian-shrimp.github.io/post/xiao-xi-dui-lie---Rabbbit%20.html</guid><pubDate>Sun, 30 Jun 2024 08:51:10 +0000</pubDate></item><item><title>服务保护和分布式事务</title><link>https://2004GIF.github.io/chenzian-shrimp.github.io/post/fu-wu-bao-hu-he-fen-bu-shi-shi-wu.html</link><description># 服务保护&#13;
 实现步骤：&#13;
 1. 找出需要进行远程调用的业务&#13;
 &#13;
