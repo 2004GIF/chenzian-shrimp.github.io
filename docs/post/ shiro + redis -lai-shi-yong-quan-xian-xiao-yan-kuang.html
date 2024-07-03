@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html data-color-mode="light" data-dark-theme="dark" data-light-theme="light" lang="zh-CN">
+<head>
+    <meta content="text/html; charset=utf-8" http-equiv="content-type" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <link href='https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/Primer/21.0.7/primer.css' rel='stylesheet' />
+    <link rel="icon" href="https://github.githubassets.com/favicons/favicon.svg"><script>
+        let theme = localStorage.getItem("meek_theme") || "light";
+        document.documentElement.setAttribute("data-color-mode", theme);
+    </script>
+<meta name="description" content="
+
+1. 使用 `shiro-redis-spring-boot-starter` 
+
+shiro 只提供了对 ehcache 和 parallelHashMap 的支持，下面介绍一个 shiro 可以使用的 redis cache 实现，希望对大家有帮助！ 文档官方：https://alexxiyang.github.io/shiro-redis/
+
+坐标：
+
+```xml
+<!-- 安全框架 -->
+<!-- springboot + shiro  + redis  -->
+<dependency>
+    <groupId>org.crazycake</groupId>
+    <artifactId>shiro-redis-spring-boot-starter</artifactId>
+    <version>3.3.1</version>
+</dependency>
+```
+
+2. 创建类实现 `AuthorizingRealm`  来实现认证方法和权限校验方法
+
+   ```java
+   package com.lostpropery.shiro;
+   
+   
+   import cn.hutool.jwt.JWTException;
+   import com.lostpropery.common.UserStatus;
+   import com.lostpropery.entity.po.SysRole;
+   import com.lostpropery.entity.po.SysUser;
+   import com.lostpropery.service.ISysUserService;
+   import com.lostpropery.utils.JwtUtil;
+   import lombok.extern.slf4j.Slf4j;
+   import org.apache.shiro.authc.*;
+   import org.apache.shiro.authz.AuthorizationInfo;
+   import org.apache.shiro.authz.SimpleAuthorizationInfo;
+   import org.apache.shiro.realm.AuthorizingRealm;
+   import org.apache.shiro.subject.PrincipalCollection;
+   import org.springframework.beans.factory.annotation.Autowired;
+   import org.springframework.stereotype.Component;
+   
+   import java.util.List;
+   import java.util.Map;
+   import java.util.stream.Collectors;
+   
+   @Component
+   @Slf4j
+   public class UserRealm extends AuthorizingRealm {
+       @Autowired
+       private ISysUserService userService;
+   
+       @Override
+       // 支持自定义的 Token
+       public boolean supports(AuthenticationToken token) {
+           return token instanceof JwtToken;
+       }
+   
+       @Override
+       // 授权方法
+       protected AuthorizationInfo doGetAuthorizationInfo(PrincipalCollection principalCollection) {
+           System.out.println('授权方法');
+           SysUser user = (SysUser) principalCollection.getPrimaryPrincipal();
+           if (user == null) {
+               throw new JWTException('令牌错误');
+           }
+           List<SysRole> roleList = userService.findByRolesUserId(user.getId());
+           List<String> roleNames = roleList.stream().map(SysRole::getRoleName).collect(Collectors.toList());
+           System.out.println('当前用户拥有的角色信息：' + roleNames);
+           if (!roleNames.isEmpty()) {
+               SimpleAuthorizationInfo info = new SimpleAuthorizationInfo();
+               info.addRoles(roleNames);
+               return info;
+           }
+           return null;
+       }
+   
+       @Override
+       // 认证方法
+       protected AuthenticationInfo doGetAuthenticationInfo(AuthenticationToken authenticationToken) throws AuthenticationException {
+           System.out.println('认证方法执行了');
+           JwtToken jwtToken = (JwtToken) authenticationToken;
+           Map<String, Object> map = JwtUtil.parseJWT(jwtToken.getCredentials().toString());
+           Integer id = (Integer) map.get('userId');
+           SysUser one = userService.findById(id);
+           if (one == null) {
+               throw new UnknownAccountException('用户不存在');
+           }
+           one.setPassword(null);
+           //用户信息  密钥token 用户名字
+           // 第一个参考要传递一个 对象，并且提供一个id属性和对应的get set方法 给redis进行缓存作为key
+           return new SimpleAuthenticationInfo(one, jwtToken.getCredentials(), getName());
+       }
+   
+   }
+   ```
+
+3. 创建 JwtToken 类 , 使用生成的jwt 来作为主体身份的凭证 ，默认是用 `UsernamePasswordToken` 实现的，当时我们现在使用的 jwt 作为主体身份的凭证
+
+   ```java
+   package com.lostpropery.shiro;
+   
+   import org.apache.shiro.authc.AuthenticationToken;
+   
+   public class JwtToken implements AuthenticationToken {
+       private String token;
+       public JwtToken(String token) {
+           this.token = token;
+       }
+       @Override
+       public Object getPrincipal() {
+           return token;
+       }
+   
+       @Override
+       public Object getCredentials() {
+           return token;
+       }
+   }
+   ```
+
+4. 创建 UserInfo 类 ,  决定 token 中封装的什么信息，这信息必须要生成token的返回的一致
+
+   ```java
+   package com.lostpropery.shiro;
+   
+   import lombok.Data;
+   
+   /**
+    * 将这些信息封装token
+    */
+   @Data
+   public class UserInfo {
+       private String id;
+       private String account;
+   }
+   
+   ```
+
+5. 定义认证拦截器
+
+   ````java
+   package com.lostpropery.filter;
+   
+   import cn.hutool.core.util.StrUtil;
+   import cn.hutool.json.JSONUtil;
+   import com.lostpropery.common.R;
+   import com.lostpropery.shiro.JwtToken;
+   import com.lostpropery.utils.JwtUtil;
+   import org.apache.shiro.authc.AuthenticationException;
+   import org.apache.shiro.authc.AuthenticationToken;
+   import org.apache.shiro.web.filter.authc.BasicHttpAuthenticationFilter;
+   import org.springframework.stereotype.Component;
+   
+   import javax.servlet.ServletOutputStream;
+   import javax.servlet.ServletRequest;
+   import javax.servlet.ServletResponse;
+   import javax.servlet.http.HttpServletRequest;
+   import javax.servlet.http.HttpServletResponse;
+   import java.io.IOException;
+   import java.nio.charset.StandardCharsets;
+   import java.util.Map;
+   
+   @Component
+   public class JwtFilter extends BasicHttpAuthenticationFilter {
+   
+   
+       @Override
+       // 创建token
+       protected AuthenticationToken createToken(ServletRequest servletRequest, ServletResponse servletResponse)  {
+           HttpServletRequest request = (HttpServletRequest) servletRequest;
+           String token = request.getHeader(JwtUtil.JWT_TOKEN_NAME);
+           if (StrUtil.isEmptyIfStr(token)){
+               return null;
+           }
+           return new JwtToken(token);
+       }
+   
+       @Override
+       // 拦截请求
+       protected boolean onAccessDenied(ServletRequest servletRequest, ServletResponse servletResponse) throws Exception {
+           HttpServletRequest request = (HttpServletRequest) servletRequest;
+           String token = request.getHeader(JwtUtil.JWT_TOKEN_NAME);
+           if (StrUtil.isEmptyIfStr(token)){
+               return true;
+           }
+           Map<String, Object> map = null;
+           try {
+               map = JwtUtil.parseJWT(token);
+           } catch (Exception e) {
+               return true;
+           }
+   
+           if (map == null || JwtUtil.isExpired(token)){
+               return false;
+           }else {
+               // 执行登录（有 sub 对象调用login 方法）
+               return executeLogin(servletRequest,servletResponse) ;
+           }
+       }
+   
+       @Override
+       // 当登录 sub 对象调用 login 方法登录失败的时候调用该方法 （ realm 的认证方法获取到 token 就会调用该方法）
+       protected boolean onLoginFailure(AuthenticationToken token, AuthenticationException e, ServletRequest request, ServletResponse response) {
+           HttpServletResponse servletResponse = (HttpServletResponse) response;
+           servletResponse.setCharacterEncoding('UTF-8');
+           servletResponse.setContentType('application/json;charset=utf-8');
+           Throwable throwable =  e.getCause() == null ? e : e.getCause();
+           R r = R.error(throwable.getMessage());
+           String res = JSONUtil.toJsonStr(r);
+           try {
+               ServletOutputStream outputStream = servletResponse.getOutputStream();
+               outputStream.write(res.getBytes(StandardCharsets.UTF_8) );
+           } catch (IOException ex) {
+               throw new RuntimeException(ex);
+           }
+           return false;
+       }
+   
+   }
+   
+   ````
+
+6. 定义配置
+
+   ````java
+   package com.lostpropery.config;
+   
+   import com.lostpropery.filter.JwtFilter;
+   import com.lostpropery.shiro.UserRealm;
+   import org.apache.shiro.cache.CacheManager;
+   import org.apache.shiro.mgt.DefaultSessionStorageEvaluator;
+   import org.apache.shiro.mgt.DefaultSubjectDAO;
+   import org.apache.shiro.mgt.SecurityManager;
+   import org.apache.shiro.session.mgt.SessionManager;
+   import org.apache.shiro.spring.security.interceptor.AuthorizationAttributeSourceAdvisor;
+   import org.apache.shiro.spring.web.ShiroFilterFactoryBean;
+   import org.apache.shiro.spring.web.config.DefaultShiroFilterChainDefinition;
+   import org.apache.shiro.spring.web.config.ShiroFilterChainDefinition;
+   import org.apache.shiro.web.mgt.DefaultWebSecurityManager;
+   import org.apache.shiro.web.session.mgt.DefaultWebSessionManager;
+   import org.crazycake.shiro.RedisCacheManager;
+   import org.crazycake.shiro.RedisSessionDAO;
+   import org.crazycake.shiro.serializer.StringSerializer;
+   import org.springframework.beans.factory.annotation.Autowired;
+   import org.springframework.context.annotation.Bean;
+   import org.springframework.context.annotation.Configuration;
+   
+   import javax.servlet.Filter;
+   import java.util.Arrays;
+   import java.util.HashMap;
+   import java.util.LinkedHashMap;
+   import java.util.Map;
+   
+   @Configuration
+   public class ShiroConfig {
+       @Autowired
+       private JwtFilter jwtFilter;
+   
+       // 将 knife4j 的资源屏蔽掉
+       private final String[] knife4j = new String[]{
+               '/doc.html',
+               '/webjars/**',
+               '/v3/**',
+               '/swagger-resources/**'
+       };
+   	/**
+   	如果项目使用 SpringAOP 就需要加上的这个 AuthorizationAttributeSourceAdvisor 
+   	为应用程序的方法调用自动应用Shiro的权限（授权）检查 ， 如果不加上导致访问加上权限校验注解的资源出现 404 的问题
+   	**/
+       @Bean
+       public AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor() {
+           return new AuthorizationAttributeSourceAdvisor();
+       }
+   
+   
+       /**
+        * 配置Session管理器，使用Redis存储Session数据
+        *
+        * @param redisSessionDAO RedisSessionDAO对象，用于操作Redis中的Session数据
+        * @return 返回配置好的SessionManager对象
+        */
+       @Bean
+       public SessionManager sessionManager(RedisSessionDAO redisSessionDAO) {
+           DefaultWebSessionManager sessionManager = new DefaultWebSessionManager();
+           // 设置存储到redis中用户信息的前缀
+           redisSessionDAO.setKeyPrefix('shiro:');
+           sessionManager.setSessionDAO(redisSessionDAO);
+           return sessionManager;
+       }
+   
+   
+       /**
+        * 配置安全管理员，整合用户认证和授权信息
+        *
+        * @param accountRealm      用户认证Realm
+        * @param sessionManager    Session管理器
+        * @param redisCacheManager Redis缓存管理器
+        * @return 返回配置好的DefaultWebSecurityManager对象
+        */
+       @Bean
+       public DefaultWebSecurityManager securityManager(
+           UserRealm accountRealm,
+           SessionManager sessionManager,
+           RedisCacheManager redisCacheManager
+       ) {
+           DefaultWebSecurityManager securityManager = new DefaultWebSecurityManager(accountRealm);
+           // 生成的用户的信息缓存前缀
+           redisCacheManager.setKeyPrefix('shiro:');
+           securityManager.setSessionManager(sessionManager);
+           securityManager.setCacheManager(redisCacheManager);
+           /*
+            * 关闭shiro自带的session，详情见文档
+            */
+           DefaultSubjectDAO subjectDAO = new DefaultSubjectDAO();
+           DefaultSessionStorageEvaluator defaultSessionStorageEvaluator = new DefaultSessionStorageEvaluator();
+           defaultSessionStorageEvaluator.setSessionStorageEnabled(false);
+           subjectDAO.setSessionStorageEvaluator(defaultSessionStorageEvaluator);
+           securityManager.setSubjectDAO(subjectDAO);
+           return securityManager;
+       }
+   
+   
+       /**
+        * 定义过滤器链，指定不同路径的过滤器规则
+        *
+        * @return 返回配置好的ShiroFilterChainDefinition对象
+        */
+       @Bean
+       public ShiroFilterChainDefinition shiroFilterChainDefinition() {
+           DefaultShiroFilterChainDefinition chainDefinition = new DefaultShiroFilterChainDefinition();
+           Map<String, String> filterMap = new LinkedHashMap<>();
+           // 无需校验的接口
+           filterMap.put(Arrays.toString(knife4j), 'anon');
+           filterMap.put('/common/**', 'anon');
+   
+           // 需要校验的接口 
+           filterMap.put('/**', 'jwt'); // 主要通过注解方式校验权限
+           chainDefinition.addPathDefinitions(filterMap);
+           return chainDefinition;
+       }
+   
+       /**
+        * 配置ShiroFilterFactoryBean，整合过滤器和安全管理器
+        *
+        * @param securityManager            安全管理器
+        * @param shiroFilterChainDefinition 过滤器链定义
+        * @return 返回配置好的ShiroFilterFactoryBean对象
+        */
+       @Bean('shiroFilterFactoryBean')
+       public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager,
+                                                            ShiroFilterChainDefinition shiroFilterChainDefinition) {
+           ShiroFilterFactoryBean shiroFilter = new ShiroFilterFactoryBean();
+           shiroFilter.setSecurityManager(securityManager);
+           Map<String, Filter> filters = new HashMap<>();
+           filters.put('jwt', jwtFilter);
+           shiroFilter.setFilters(filters);
+   
+           Map<String, String> filterMap = shiroFilterChainDefinition.getFilterChainMap();
+   
+           shiroFilter.setFilterChainDefinitionMap(filterMap);
+   
+           return shiroFilter;
+       }
+   }
+   
+   ````
+
+7. 取消使用 ShiroAnnotationProcessorAutoConfiguration  ( 使用 Shiro 框架的同时使用了 SpringAOP 才要做 )
+
+   ShiroAnnotationProcessorAutoConfiguration：  是Apache Shiro的Spring Boot自动配置类，它负责处理Shiro的注解处理器。">
+<meta property="og:title" content=" shiro + redis 来使用权限校验框">
+<meta property="og:description" content="
+
+1. 使用 `shiro-redis-spring-boot-starter` 
+
+shiro 只提供了对 ehcache 和 parallelHashMap 的支持，下面介绍一个 shiro 可以使用的 redis cache 实现，希望对大家有帮助！ 文档官方：https://alexxiyang.github.io/shiro-redis/
+
+坐标：
+
+```xml
+<!-- 安全框架 -->
+<!-- springboot + shiro  + redis  -->
+<dependency>
+    <groupId>org.crazycake</groupId>
+    <artifactId>shiro-redis-spring-boot-starter</artifactId>
+    <version>3.3.1</version>
+</dependency>
+```
+
+2. 创建类实现 `AuthorizingRealm`  来实现认证方法和权限校验方法
+
+   ```java
+   package com.lostpropery.shiro;
+   
+   
+   import cn.hutool.jwt.JWTException;
+   import com.lostpropery.common.UserStatus;
+   import com.lostpropery.entity.po.SysRole;
+   import com.lostpropery.entity.po.SysUser;
+   import com.lostpropery.service.ISysUserService;
+   import com.lostpropery.utils.JwtUtil;
+   import lombok.extern.slf4j.Slf4j;
+   import org.apache.shiro.authc.*;
+   import org.apache.shiro.authz.AuthorizationInfo;
+   import org.apache.shiro.authz.SimpleAuthorizationInfo;
+   import org.apache.shiro.realm.AuthorizingRealm;
+   import org.apache.shiro.subject.PrincipalCollection;
+   import org.springframework.beans.factory.annotation.Autowired;
+   import org.springframework.stereotype.Component;
+   
+   import java.util.List;
+   import java.util.Map;
+   import java.util.stream.Collectors;
+   
+   @Component
+   @Slf4j
+   public class UserRealm extends AuthorizingRealm {
+       @Autowired
+       private ISysUserService userService;
+   
+       @Override
+       // 支持自定义的 Token
+       public boolean supports(AuthenticationToken token) {
+           return token instanceof JwtToken;
+       }
+   
+       @Override
+       // 授权方法
+       protected AuthorizationInfo doGetAuthorizationInfo(PrincipalCollection principalCollection) {
+           System.out.println('授权方法');
+           SysUser user = (SysUser) principalCollection.getPrimaryPrincipal();
+           if (user == null) {
+               throw new JWTException('令牌错误');
+           }
+           List<SysRole> roleList = userService.findByRolesUserId(user.getId());
+           List<String> roleNames = roleList.stream().map(SysRole::getRoleName).collect(Collectors.toList());
+           System.out.println('当前用户拥有的角色信息：' + roleNames);
+           if (!roleNames.isEmpty()) {
+               SimpleAuthorizationInfo info = new SimpleAuthorizationInfo();
+               info.addRoles(roleNames);
+               return info;
+           }
+           return null;
+       }
+   
+       @Override
+       // 认证方法
+       protected AuthenticationInfo doGetAuthenticationInfo(AuthenticationToken authenticationToken) throws AuthenticationException {
+           System.out.println('认证方法执行了');
+           JwtToken jwtToken = (JwtToken) authenticationToken;
+           Map<String, Object> map = JwtUtil.parseJWT(jwtToken.getCredentials().toString());
+           Integer id = (Integer) map.get('userId');
+           SysUser one = userService.findById(id);
+           if (one == null) {
+               throw new UnknownAccountException('用户不存在');
+           }
+           one.setPassword(null);
+           //用户信息  密钥token 用户名字
+           // 第一个参考要传递一个 对象，并且提供一个id属性和对应的get set方法 给redis进行缓存作为key
+           return new SimpleAuthenticationInfo(one, jwtToken.getCredentials(), getName());
+       }
+   
+   }
+   ```
+
+3. 创建 JwtToken 类 , 使用生成的jwt 来作为主体身份的凭证 ，默认是用 `UsernamePasswordToken` 实现的，当时我们现在使用的 jwt 作为主体身份的凭证
+
+   ```java
+   package com.lostpropery.shiro;
+   
+   import org.apache.shiro.authc.AuthenticationToken;
+   
+   public class JwtToken implements AuthenticationToken {
+       private String token;
+       public JwtToken(String token) {
+           this.token = token;
+       }
+       @Override
+       public Object getPrincipal() {
+           return token;
+       }
+   
+       @Override
+       public Object getCredentials() {
+           return token;
+       }
+   }
+   ```
+
+4. 创建 UserInfo 类 ,  决定 token 中封装的什么信息，这信息必须要生成token的返回的一致
+
+   ```java
+   package com.lostpropery.shiro;
+   
+   import lombok.Data;
+   
+   /**
+    * 将这些信息封装token
+    */
+   @Data
+   public class UserInfo {
+       private String id;
+       private String account;
+   }
+   
+   ```
+
+5. 定义认证拦截器
+
+   ````java
+   package com.lostpropery.filter;
+   
+   import cn.hutool.core.util.StrUtil;
+   import cn.hutool.json.JSONUtil;
+   import com.lostpropery.common.R;
+   import com.lostpropery.shiro.JwtToken;
+   import com.lostpropery.utils.JwtUtil;
+   import org.apache.shiro.authc.AuthenticationException;
+   import org.apache.shiro.authc.AuthenticationToken;
+   import org.apache.shiro.web.filter.authc.BasicHttpAuthenticationFilter;
+   import org.springframework.stereotype.Component;
+   
+   import javax.servlet.ServletOutputStream;
+   import javax.servlet.ServletRequest;
+   import javax.servlet.ServletResponse;
+   import javax.servlet.http.HttpServletRequest;
+   import javax.servlet.http.HttpServletResponse;
+   import java.io.IOException;
+   import java.nio.charset.StandardCharsets;
+   import java.util.Map;
+   
+   @Component
+   public class JwtFilter extends BasicHttpAuthenticationFilter {
+   
+   
+       @Override
+       // 创建token
+       protected AuthenticationToken createToken(ServletRequest servletRequest, ServletResponse servletResponse)  {
+           HttpServletRequest request = (HttpServletRequest) servletRequest;
+           String token = request.getHeader(JwtUtil.JWT_TOKEN_NAME);
+           if (StrUtil.isEmptyIfStr(token)){
+               return null;
+           }
+           return new JwtToken(token);
+       }
+   
+       @Override
+       // 拦截请求
+       protected boolean onAccessDenied(ServletRequest servletRequest, ServletResponse servletResponse) throws Exception {
+           HttpServletRequest request = (HttpServletRequest) servletRequest;
+           String token = request.getHeader(JwtUtil.JWT_TOKEN_NAME);
+           if (StrUtil.isEmptyIfStr(token)){
+               return true;
+           }
+           Map<String, Object> map = null;
+           try {
+               map = JwtUtil.parseJWT(token);
+           } catch (Exception e) {
+               return true;
+           }
+   
+           if (map == null || JwtUtil.isExpired(token)){
+               return false;
+           }else {
+               // 执行登录（有 sub 对象调用login 方法）
+               return executeLogin(servletRequest,servletResponse) ;
+           }
+       }
+   
+       @Override
+       // 当登录 sub 对象调用 login 方法登录失败的时候调用该方法 （ realm 的认证方法获取到 token 就会调用该方法）
+       protected boolean onLoginFailure(AuthenticationToken token, AuthenticationException e, ServletRequest request, ServletResponse response) {
+           HttpServletResponse servletResponse = (HttpServletResponse) response;
+           servletResponse.setCharacterEncoding('UTF-8');
+           servletResponse.setContentType('application/json;charset=utf-8');
+           Throwable throwable =  e.getCause() == null ? e : e.getCause();
+           R r = R.error(throwable.getMessage());
+           String res = JSONUtil.toJsonStr(r);
+           try {
+               ServletOutputStream outputStream = servletResponse.getOutputStream();
+               outputStream.write(res.getBytes(StandardCharsets.UTF_8) );
+           } catch (IOException ex) {
+               throw new RuntimeException(ex);
+           }
+           return false;
+       }
+   
+   }
+   
+   ````
+
+6. 定义配置
+
+   ````java
+   package com.lostpropery.config;
+   
+   import com.lostpropery.filter.JwtFilter;
+   import com.lostpropery.shiro.UserRealm;
+   import org.apache.shiro.cache.CacheManager;
+   import org.apache.shiro.mgt.DefaultSessionStorageEvaluator;
+   import org.apache.shiro.mgt.DefaultSubjectDAO;
+   import org.apache.shiro.mgt.SecurityManager;
+   import org.apache.shiro.session.mgt.SessionManager;
+   import org.apache.shiro.spring.security.interceptor.AuthorizationAttributeSourceAdvisor;
+   import org.apache.shiro.spring.web.ShiroFilterFactoryBean;
+   import org.apache.shiro.spring.web.config.DefaultShiroFilterChainDefinition;
+   import org.apache.shiro.spring.web.config.ShiroFilterChainDefinition;
+   import org.apache.shiro.web.mgt.DefaultWebSecurityManager;
+   import org.apache.shiro.web.session.mgt.DefaultWebSessionManager;
+   import org.crazycake.shiro.RedisCacheManager;
+   import org.crazycake.shiro.RedisSessionDAO;
+   import org.crazycake.shiro.serializer.StringSerializer;
+   import org.springframework.beans.factory.annotation.Autowired;
+   import org.springframework.context.annotation.Bean;
+   import org.springframework.context.annotation.Configuration;
+   
+   import javax.servlet.Filter;
+   import java.util.Arrays;
+   import java.util.HashMap;
+   import java.util.LinkedHashMap;
+   import java.util.Map;
+   
+   @Configuration
+   public class ShiroConfig {
+       @Autowired
+       private JwtFilter jwtFilter;
+   
+       // 将 knife4j 的资源屏蔽掉
+       private final String[] knife4j = new String[]{
+               '/doc.html',
+               '/webjars/**',
+               '/v3/**',
+               '/swagger-resources/**'
+       };
+   	/**
+   	如果项目使用 SpringAOP 就需要加上的这个 AuthorizationAttributeSourceAdvisor 
+   	为应用程序的方法调用自动应用Shiro的权限（授权）检查 ， 如果不加上导致访问加上权限校验注解的资源出现 404 的问题
+   	**/
+       @Bean
+       public AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor() {
+           return new AuthorizationAttributeSourceAdvisor();
+       }
+   
+   
+       /**
+        * 配置Session管理器，使用Redis存储Session数据
+        *
+        * @param redisSessionDAO RedisSessionDAO对象，用于操作Redis中的Session数据
+        * @return 返回配置好的SessionManager对象
+        */
+       @Bean
+       public SessionManager sessionManager(RedisSessionDAO redisSessionDAO) {
+           DefaultWebSessionManager sessionManager = new DefaultWebSessionManager();
+           // 设置存储到redis中用户信息的前缀
+           redisSessionDAO.setKeyPrefix('shiro:');
+           sessionManager.setSessionDAO(redisSessionDAO);
+           return sessionManager;
+       }
+   
+   
+       /**
+        * 配置安全管理员，整合用户认证和授权信息
+        *
+        * @param accountRealm      用户认证Realm
+        * @param sessionManager    Session管理器
+        * @param redisCacheManager Redis缓存管理器
+        * @return 返回配置好的DefaultWebSecurityManager对象
+        */
+       @Bean
+       public DefaultWebSecurityManager securityManager(
+           UserRealm accountRealm,
+           SessionManager sessionManager,
+           RedisCacheManager redisCacheManager
+       ) {
+           DefaultWebSecurityManager securityManager = new DefaultWebSecurityManager(accountRealm);
+           // 生成的用户的信息缓存前缀
+           redisCacheManager.setKeyPrefix('shiro:');
+           securityManager.setSessionManager(sessionManager);
+           securityManager.setCacheManager(redisCacheManager);
+           /*
+            * 关闭shiro自带的session，详情见文档
+            */
+           DefaultSubjectDAO subjectDAO = new DefaultSubjectDAO();
+           DefaultSessionStorageEvaluator defaultSessionStorageEvaluator = new DefaultSessionStorageEvaluator();
+           defaultSessionStorageEvaluator.setSessionStorageEnabled(false);
+           subjectDAO.setSessionStorageEvaluator(defaultSessionStorageEvaluator);
+           securityManager.setSubjectDAO(subjectDAO);
+           return securityManager;
+       }
+   
+   
+       /**
+        * 定义过滤器链，指定不同路径的过滤器规则
+        *
+        * @return 返回配置好的ShiroFilterChainDefinition对象
+        */
+       @Bean
+       public ShiroFilterChainDefinition shiroFilterChainDefinition() {
+           DefaultShiroFilterChainDefinition chainDefinition = new DefaultShiroFilterChainDefinition();
+           Map<String, String> filterMap = new LinkedHashMap<>();
+           // 无需校验的接口
+           filterMap.put(Arrays.toString(knife4j), 'anon');
+           filterMap.put('/common/**', 'anon');
+   
+           // 需要校验的接口 
+           filterMap.put('/**', 'jwt'); // 主要通过注解方式校验权限
+           chainDefinition.addPathDefinitions(filterMap);
+           return chainDefinition;
+       }
+   
+       /**
+        * 配置ShiroFilterFactoryBean，整合过滤器和安全管理器
+        *
+        * @param securityManager            安全管理器
+        * @param shiroFilterChainDefinition 过滤器链定义
+        * @return 返回配置好的ShiroFilterFactoryBean对象
+        */
+       @Bean('shiroFilterFactoryBean')
+       public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager,
+                                                            ShiroFilterChainDefinition shiroFilterChainDefinition) {
+           ShiroFilterFactoryBean shiroFilter = new ShiroFilterFactoryBean();
+           shiroFilter.setSecurityManager(securityManager);
+           Map<String, Filter> filters = new HashMap<>();
+           filters.put('jwt', jwtFilter);
+           shiroFilter.setFilters(filters);
+   
+           Map<String, String> filterMap = shiroFilterChainDefinition.getFilterChainMap();
+   
+           shiroFilter.setFilterChainDefinitionMap(filterMap);
+   
+           return shiroFilter;
+       }
+   }
+   
+   ````
+
+7. 取消使用 ShiroAnnotationProcessorAutoConfiguration  ( 使用 Shiro 框架的同时使用了 SpringAOP 才要做 )
+
+   ShiroAnnotationProcessorAutoConfiguration：  是Apache Shiro的Spring Boot自动配置类，它负责处理Shiro的注解处理器。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://2004GIF.github.io/chenzian-shrimp.github.io/post/%20shiro%20%2B%20redis%20-lai-shi-yong-quan-xian-xiao-yan-kuang.html">
+<meta property="og:image" content="https://github.githubassets.com/favicons/favicon.svg">
+<title> shiro + redis 来使用权限校验框</title>
+<link href="//unpkg.com/@wooorm/starry-night@2.1.1/style/both.css" rel="stylesheet" />
+
+</head>
+<style>
+body{box-sizing: border-box;min-width: 200px;max-width: 900px;margin: 20px auto;padding: 45px;font-size: 16px;font-family: sans-serif;line-height: 1.25;}
+#header{display:flex;padding-bottom:8px;border-bottom: 1px solid var(--borderColor-muted, var(--color-border-muted));margin-bottom: 16px;}
+#footer {margin-top:64px; text-align: center;font-size: small;}
+
+</style>
+
+<style>
+.postTitle{margin: auto 0;font-size:40px;font-weight:bold;}
+.title-right{display:flex;margin:auto 0 0 auto;}
+.title-right .circle{padding: 14px 16px;margin-right:8px;}
+#postBody{border-bottom: 1px solid var(--color-border-default);padding-bottom:36px;}
+#postBody hr{height:2px;}
+#cmButton{height:48px;margin-top:48px;}
+#comments{margin-top:64px;}
+.g-emoji{font-size:24px;}
+@media (max-width: 600px) {
+    body {padding: 8px;}
+    .postTitle{font-size:24px;}
+}
+</style>
+
+
+
+
+<body>
+    <div id="header">
+<h1 class="postTitle"> shiro + redis 来使用权限校验框</h1>
+<div class="title-right">
+    <a href="https://2004GIF.github.io/chenzian-shrimp.github.io" id="buttonHome" class="btn btn-invisible circle" title="首页">
+        <svg class="octicon" width="16" height="16">
+            <path id="pathHome" fill-rule="evenodd"></path>
+        </svg>
+    </a>
+    
+    <a href="https://github.com/2004GIF/chenzian-shrimp.github.io/issues/9" target="_blank" class="btn btn-invisible circle" title="Issue">
+        <svg class="octicon" width="16" height="16">
+            <path id="pathIssue" fill-rule="evenodd"></path>
+        </svg>
+    </a>
+    
+
+    <a class="btn btn-invisible circle" onclick="modeSwitch();" title="切换主题">
+        <svg class="octicon" width="16" height="16" >
+            <path id="themeSwitch" fill-rule="evenodd"></path>
+        </svg>
+    </a>
+
+</div>
+</div>
+    <div id="content">
+<div class="markdown-body" id="postBody"><ol>
+<li>使用 <code class="notranslate">shiro-redis-spring-boot-starter</code></li>
+</ol>
+<p>shiro 只提供了对 ehcache 和 parallelHashMap 的支持，下面介绍一个 shiro 可以使用的 redis cache 实现，希望对大家有帮助！ 文档官方：<a href="https://alexxiyang.github.io/shiro-redis/" rel="nofollow">https://alexxiyang.github.io/shiro-redis/</a></p>
+<p>坐标：</p>
+<div class="highlight highlight-text-xml"><pre class="notranslate"><span class="pl-c"><span class="pl-c">&lt;!--</span> 安全框架 <span class="pl-c">--&gt;</span></span>
+<span class="pl-c"><span class="pl-c">&lt;!--</span> springboot + shiro  + redis  <span class="pl-c">--&gt;</span></span>
+&lt;<span class="pl-ent">dependency</span>&gt;
+    &lt;<span class="pl-ent">groupId</span>&gt;org.crazycake&lt;/<span class="pl-ent">groupId</span>&gt;
+    &lt;<span class="pl-ent">artifactId</span>&gt;shiro-redis-spring-boot-starter&lt;/<span class="pl-ent">artifactId</span>&gt;
+    &lt;<span class="pl-ent">version</span>&gt;3.3.1&lt;/<span class="pl-ent">version</span>&gt;
+&lt;/<span class="pl-ent">dependency</span>&gt;</pre></div>
+<ol start="2">
+<li>
+<p>创建类实现 <code class="notranslate">AuthorizingRealm</code>  来实现认证方法和权限校验方法</p>
+<div class="highlight highlight-source-java"><pre class="notranslate"><span class="pl-k">package</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">shiro</span>;
+
+
+<span class="pl-k">import</span> <span class="pl-s1">cn</span>.<span class="pl-s1">hutool</span>.<span class="pl-s1">jwt</span>.<span class="pl-s1">JWTException</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">common</span>.<span class="pl-s1">UserStatus</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">entity</span>.<span class="pl-s1">po</span>.<span class="pl-s1">SysRole</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">entity</span>.<span class="pl-s1">po</span>.<span class="pl-s1">SysUser</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">service</span>.<span class="pl-s1">ISysUserService</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">utils</span>.<span class="pl-s1">JwtUtil</span>;
+<span class="pl-k">import</span> <span class="pl-s1">lombok</span>.<span class="pl-s1">extern</span>.<span class="pl-s1">slf4j</span>.<span class="pl-s1">Slf4j</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">authc</span>.*;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">authz</span>.<span class="pl-s1">AuthorizationInfo</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">authz</span>.<span class="pl-s1">SimpleAuthorizationInfo</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">realm</span>.<span class="pl-s1">AuthorizingRealm</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">subject</span>.<span class="pl-s1">PrincipalCollection</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">springframework</span>.<span class="pl-s1">beans</span>.<span class="pl-s1">factory</span>.<span class="pl-s1">annotation</span>.<span class="pl-s1">Autowired</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">springframework</span>.<span class="pl-s1">stereotype</span>.<span class="pl-s1">Component</span>;
+
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">util</span>.<span class="pl-s1">List</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">util</span>.<span class="pl-s1">Map</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">util</span>.<span class="pl-s1">stream</span>.<span class="pl-s1">Collectors</span>;
+
+<span class="pl-c1">@</span><span class="pl-c1">Component</span>
+<span class="pl-c1">@</span><span class="pl-c1">Slf4j</span>
+<span class="pl-k">public</span> <span class="pl-k">class</span> <span class="pl-smi">UserRealm</span> <span class="pl-k">extends</span> <span class="pl-smi">AuthorizingRealm</span> {
+    <span class="pl-c1">@</span><span class="pl-c1">Autowired</span>
+    <span class="pl-k">private</span> <span class="pl-smi">ISysUserService</span> <span class="pl-s1">userService</span>;
+
+    <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-c">// 支持自定义的 Token</span>
+    <span class="pl-k">public</span> <span class="pl-smi">boolean</span> <span class="pl-en">supports</span>(<span class="pl-smi">AuthenticationToken</span> <span class="pl-s1">token</span>) {
+        <span class="pl-k">return</span> <span class="pl-s1">token</span> <span class="pl-k">instanceof</span> <span class="pl-smi">JwtToken</span>;
+    }
+
+    <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-c">// 授权方法</span>
+    <span class="pl-k">protected</span> <span class="pl-smi">AuthorizationInfo</span> <span class="pl-en">doGetAuthorizationInfo</span>(<span class="pl-smi">PrincipalCollection</span> <span class="pl-s1">principalCollection</span>) {
+        <span class="pl-smi">System</span>.<span class="pl-s1">out</span>.<span class="pl-en">println</span>(<span class="pl-s">"授权方法"</span>);
+        <span class="pl-smi">SysUser</span> <span class="pl-s1">user</span> = (<span class="pl-smi">SysUser</span>) <span class="pl-s1">principalCollection</span>.<span class="pl-en">getPrimaryPrincipal</span>();
+        <span class="pl-k">if</span> (<span class="pl-s1">user</span> == <span class="pl-c1">null</span>) {
+            <span class="pl-k">throw</span> <span class="pl-k">new</span> <span class="pl-smi">JWTException</span>(<span class="pl-s">"令牌错误"</span>);
+        }
+        <span class="pl-smi">List</span>&lt;<span class="pl-smi">SysRole</span>&gt; <span class="pl-s1">roleList</span> = <span class="pl-s1">userService</span>.<span class="pl-en">findByRolesUserId</span>(<span class="pl-s1">user</span>.<span class="pl-en">getId</span>());
+        <span class="pl-smi">List</span>&lt;<span class="pl-smi">String</span>&gt; <span class="pl-s1">roleNames</span> = <span class="pl-s1">roleList</span>.<span class="pl-en">stream</span>().<span class="pl-en">map</span>(<span class="pl-smi">SysRole</span>::<span class="pl-s1">getRoleName</span>).<span class="pl-en">collect</span>(<span class="pl-smi">Collectors</span>.<span class="pl-en">toList</span>());
+        <span class="pl-smi">System</span>.<span class="pl-s1">out</span>.<span class="pl-en">println</span>(<span class="pl-s">"当前用户拥有的角色信息："</span> + <span class="pl-s1">roleNames</span>);
+        <span class="pl-k">if</span> (!<span class="pl-s1">roleNames</span>.<span class="pl-en">isEmpty</span>()) {
+            <span class="pl-smi">SimpleAuthorizationInfo</span> <span class="pl-s1">info</span> = <span class="pl-k">new</span> <span class="pl-smi">SimpleAuthorizationInfo</span>();
+            <span class="pl-s1">info</span>.<span class="pl-en">addRoles</span>(<span class="pl-s1">roleNames</span>);
+            <span class="pl-k">return</span> <span class="pl-s1">info</span>;
+        }
+        <span class="pl-k">return</span> <span class="pl-c1">null</span>;
+    }
+
+    <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-c">// 认证方法</span>
+    <span class="pl-k">protected</span> <span class="pl-smi">AuthenticationInfo</span> <span class="pl-en">doGetAuthenticationInfo</span>(<span class="pl-smi">AuthenticationToken</span> <span class="pl-s1">authenticationToken</span>) <span class="pl-k">throws</span> <span class="pl-smi">AuthenticationException</span> {
+        <span class="pl-smi">System</span>.<span class="pl-s1">out</span>.<span class="pl-en">println</span>(<span class="pl-s">"认证方法执行了"</span>);
+        <span class="pl-smi">JwtToken</span> <span class="pl-s1">jwtToken</span> = (<span class="pl-smi">JwtToken</span>) <span class="pl-s1">authenticationToken</span>;
+        <span class="pl-smi">Map</span>&lt;<span class="pl-smi">String</span>, <span class="pl-smi">Object</span>&gt; <span class="pl-s1">map</span> = <span class="pl-smi">JwtUtil</span>.<span class="pl-en">parseJWT</span>(<span class="pl-s1">jwtToken</span>.<span class="pl-en">getCredentials</span>().<span class="pl-en">toString</span>());
+        <span class="pl-smi">Integer</span> <span class="pl-s1">id</span> = (<span class="pl-smi">Integer</span>) <span class="pl-s1">map</span>.<span class="pl-en">get</span>(<span class="pl-s">"userId"</span>);
+        <span class="pl-smi">SysUser</span> <span class="pl-s1">one</span> = <span class="pl-s1">userService</span>.<span class="pl-en">findById</span>(<span class="pl-s1">id</span>);
+        <span class="pl-k">if</span> (<span class="pl-s1">one</span> == <span class="pl-c1">null</span>) {
+            <span class="pl-k">throw</span> <span class="pl-k">new</span> <span class="pl-smi">UnknownAccountException</span>(<span class="pl-s">"用户不存在"</span>);
+        }
+        <span class="pl-s1">one</span>.<span class="pl-en">setPassword</span>(<span class="pl-c1">null</span>);
+        <span class="pl-c">//用户信息  密钥token 用户名字</span>
+        <span class="pl-c">// 第一个参考要传递一个 对象，并且提供一个id属性和对应的get set方法 给redis进行缓存作为key</span>
+        <span class="pl-k">return</span> <span class="pl-k">new</span> <span class="pl-smi">SimpleAuthenticationInfo</span>(<span class="pl-s1">one</span>, <span class="pl-s1">jwtToken</span>.<span class="pl-en">getCredentials</span>(), <span class="pl-en">getName</span>());
+    }
+
+}</pre></div>
+</li>
+<li>
+<p>创建 JwtToken 类 , 使用生成的jwt 来作为主体身份的凭证 ，默认是用 <code class="notranslate">UsernamePasswordToken</code> 实现的，当时我们现在使用的 jwt 作为主体身份的凭证</p>
+<div class="highlight highlight-source-java"><pre class="notranslate"><span class="pl-k">package</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">shiro</span>;
+
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">authc</span>.<span class="pl-s1">AuthenticationToken</span>;
+
+<span class="pl-k">public</span> <span class="pl-k">class</span> <span class="pl-smi">JwtToken</span> <span class="pl-k">implements</span> <span class="pl-smi">AuthenticationToken</span> {
+    <span class="pl-k">private</span> <span class="pl-smi">String</span> <span class="pl-s1">token</span>;
+    <span class="pl-k">public</span> <span class="pl-smi">JwtToken</span>(<span class="pl-smi">String</span> <span class="pl-s1">token</span>) {
+        <span class="pl-smi">this</span>.<span class="pl-s1">token</span> = <span class="pl-s1">token</span>;
+    }
+    <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-k">public</span> <span class="pl-smi">Object</span> <span class="pl-en">getPrincipal</span>() {
+        <span class="pl-k">return</span> <span class="pl-s1">token</span>;
+    }
+
+    <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-k">public</span> <span class="pl-smi">Object</span> <span class="pl-en">getCredentials</span>() {
+        <span class="pl-k">return</span> <span class="pl-s1">token</span>;
+    }
+}</pre></div>
+</li>
+<li>
+<p>创建 UserInfo 类 ,  决定 token 中封装的什么信息，这信息必须要生成token的返回的一致</p>
+<div class="highlight highlight-source-java"><pre class="notranslate"><span class="pl-k">package</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">shiro</span>;
+
+<span class="pl-k">import</span> <span class="pl-s1">lombok</span>.<span class="pl-s1">Data</span>;
+
+<span class="pl-c">/**</span>
+<span class="pl-c"> * 将这些信息封装token</span>
+<span class="pl-c"> */</span>
+<span class="pl-c1">@</span><span class="pl-c1">Data</span>
+<span class="pl-k">public</span> <span class="pl-k">class</span> <span class="pl-smi">UserInfo</span> {
+    <span class="pl-k">private</span> <span class="pl-smi">String</span> <span class="pl-s1">id</span>;
+    <span class="pl-k">private</span> <span class="pl-smi">String</span> <span class="pl-s1">account</span>;
+}</pre></div>
+</li>
+<li>
+<p>定义认证拦截器</p>
+<div class="highlight highlight-source-java"><pre class="notranslate"><span class="pl-k">package</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">filter</span>;
+
+<span class="pl-k">import</span> <span class="pl-s1">cn</span>.<span class="pl-s1">hutool</span>.<span class="pl-s1">core</span>.<span class="pl-s1">util</span>.<span class="pl-s1">StrUtil</span>;
+<span class="pl-k">import</span> <span class="pl-s1">cn</span>.<span class="pl-s1">hutool</span>.<span class="pl-s1">json</span>.<span class="pl-s1">JSONUtil</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">common</span>.<span class="pl-s1">R</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">JwtToken</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">utils</span>.<span class="pl-s1">JwtUtil</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">authc</span>.<span class="pl-s1">AuthenticationException</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">authc</span>.<span class="pl-s1">AuthenticationToken</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">web</span>.<span class="pl-s1">filter</span>.<span class="pl-s1">authc</span>.<span class="pl-s1">BasicHttpAuthenticationFilter</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">springframework</span>.<span class="pl-s1">stereotype</span>.<span class="pl-s1">Component</span>;
+
+<span class="pl-k">import</span> <span class="pl-s1">javax</span>.<span class="pl-s1">servlet</span>.<span class="pl-s1">ServletOutputStream</span>;
+<span class="pl-k">import</span> <span class="pl-s1">javax</span>.<span class="pl-s1">servlet</span>.<span class="pl-s1">ServletRequest</span>;
+<span class="pl-k">import</span> <span class="pl-s1">javax</span>.<span class="pl-s1">servlet</span>.<span class="pl-s1">ServletResponse</span>;
+<span class="pl-k">import</span> <span class="pl-s1">javax</span>.<span class="pl-s1">servlet</span>.<span class="pl-s1">http</span>.<span class="pl-s1">HttpServletRequest</span>;
+<span class="pl-k">import</span> <span class="pl-s1">javax</span>.<span class="pl-s1">servlet</span>.<span class="pl-s1">http</span>.<span class="pl-s1">HttpServletResponse</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">io</span>.<span class="pl-s1">IOException</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">nio</span>.<span class="pl-s1">charset</span>.<span class="pl-s1">StandardCharsets</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">util</span>.<span class="pl-s1">Map</span>;
+
+<span class="pl-c1">@</span><span class="pl-c1">Component</span>
+<span class="pl-k">public</span> <span class="pl-k">class</span> <span class="pl-smi">JwtFilter</span> <span class="pl-k">extends</span> <span class="pl-smi">BasicHttpAuthenticationFilter</span> {
+
+
+    <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-c">// 创建token</span>
+    <span class="pl-k">protected</span> <span class="pl-smi">AuthenticationToken</span> <span class="pl-en">createToken</span>(<span class="pl-smi">ServletRequest</span> <span class="pl-s1">servletRequest</span>, <span class="pl-smi">ServletResponse</span> <span class="pl-s1">servletResponse</span>)  {
+        <span class="pl-smi">HttpServletRequest</span> <span class="pl-s1">request</span> = (<span class="pl-smi">HttpServletRequest</span>) <span class="pl-s1">servletRequest</span>;
+        <span class="pl-smi">String</span> <span class="pl-s1">token</span> = <span class="pl-s1">request</span>.<span class="pl-en">getHeader</span>(<span class="pl-smi">JwtUtil</span>.<span class="pl-c1">JWT_TOKEN_NAME</span>);
+        <span class="pl-k">if</span> (<span class="pl-smi">StrUtil</span>.<span class="pl-en">isEmptyIfStr</span>(<span class="pl-s1">token</span>)){
+            <span class="pl-k">return</span> <span class="pl-c1">null</span>;
+        }
+        <span class="pl-k">return</span> <span class="pl-k">new</span> <span class="pl-smi">JwtToken</span>(<span class="pl-s1">token</span>);
+    }
+
+    <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-c">// 拦截请求</span>
+    <span class="pl-k">protected</span> <span class="pl-smi">boolean</span> <span class="pl-en">onAccessDenied</span>(<span class="pl-smi">ServletRequest</span> <span class="pl-s1">servletRequest</span>, <span class="pl-smi">ServletResponse</span> <span class="pl-s1">servletResponse</span>) <span class="pl-k">throws</span> <span class="pl-smi">Exception</span> {
+        <span class="pl-smi">HttpServletRequest</span> <span class="pl-s1">request</span> = (<span class="pl-smi">HttpServletRequest</span>) <span class="pl-s1">servletRequest</span>;
+        <span class="pl-smi">String</span> <span class="pl-s1">token</span> = <span class="pl-s1">request</span>.<span class="pl-en">getHeader</span>(<span class="pl-smi">JwtUtil</span>.<span class="pl-c1">JWT_TOKEN_NAME</span>);
+        <span class="pl-k">if</span> (<span class="pl-smi">StrUtil</span>.<span class="pl-en">isEmptyIfStr</span>(<span class="pl-s1">token</span>)){
+            <span class="pl-k">return</span> <span class="pl-c1">true</span>;
+        }
+        <span class="pl-smi">Map</span>&lt;<span class="pl-smi">String</span>, <span class="pl-smi">Object</span>&gt; <span class="pl-s1">map</span> = <span class="pl-c1">null</span>;
+        <span class="pl-k">try</span> {
+            <span class="pl-s1">map</span> = <span class="pl-smi">JwtUtil</span>.<span class="pl-en">parseJWT</span>(<span class="pl-s1">token</span>);
+        } <span class="pl-k">catch</span> (<span class="pl-smi">Exception</span> <span class="pl-s1">e</span>) {
+            <span class="pl-k">return</span> <span class="pl-c1">true</span>;
+        }
+
+        <span class="pl-k">if</span> (<span class="pl-s1">map</span> == <span class="pl-c1">null</span> || <span class="pl-smi">JwtUtil</span>.<span class="pl-en">isExpired</span>(<span class="pl-s1">token</span>)){
+            <span class="pl-k">return</span> <span class="pl-c1">false</span>;
+        }<span class="pl-k">else</span> {
+            <span class="pl-c">// 执行登录（有 sub 对象调用login 方法）</span>
+            <span class="pl-k">return</span> <span class="pl-en">executeLogin</span>(<span class="pl-s1">servletRequest</span>,<span class="pl-s1">servletResponse</span>) ;
+        }
+    }
+
+    <span class="pl-c1">@</span><span class="pl-c1">Override</span>
+    <span class="pl-c">// 当登录 sub 对象调用 login 方法登录失败的时候调用该方法 （ realm 的认证方法获取到 token 就会调用该方法）</span>
+    <span class="pl-k">protected</span> <span class="pl-smi">boolean</span> <span class="pl-en">onLoginFailure</span>(<span class="pl-smi">AuthenticationToken</span> <span class="pl-s1">token</span>, <span class="pl-smi">AuthenticationException</span> <span class="pl-s1">e</span>, <span class="pl-smi">ServletRequest</span> <span class="pl-s1">request</span>, <span class="pl-smi">ServletResponse</span> <span class="pl-s1">response</span>) {
+        <span class="pl-smi">HttpServletResponse</span> <span class="pl-s1">servletResponse</span> = (<span class="pl-smi">HttpServletResponse</span>) <span class="pl-s1">response</span>;
+        <span class="pl-s1">servletResponse</span>.<span class="pl-en">setCharacterEncoding</span>(<span class="pl-s">"UTF-8"</span>);
+        <span class="pl-s1">servletResponse</span>.<span class="pl-en">setContentType</span>(<span class="pl-s">"application/json;charset=utf-8"</span>);
+        <span class="pl-smi">Throwable</span> <span class="pl-s1">throwable</span> =  <span class="pl-s1">e</span>.<span class="pl-en">getCause</span>() == <span class="pl-c1">null</span> ? <span class="pl-s1">e</span> : <span class="pl-s1">e</span>.<span class="pl-en">getCause</span>();
+        <span class="pl-smi">R</span> <span class="pl-s1">r</span> = <span class="pl-smi">R</span>.<span class="pl-en">error</span>(<span class="pl-s1">throwable</span>.<span class="pl-en">getMessage</span>());
+        <span class="pl-smi">String</span> <span class="pl-s1">res</span> = <span class="pl-smi">JSONUtil</span>.<span class="pl-en">toJsonStr</span>(<span class="pl-s1">r</span>);
+        <span class="pl-k">try</span> {
+            <span class="pl-smi">ServletOutputStream</span> <span class="pl-s1">outputStream</span> = <span class="pl-s1">servletResponse</span>.<span class="pl-en">getOutputStream</span>();
+            <span class="pl-s1">outputStream</span>.<span class="pl-en">write</span>(<span class="pl-s1">res</span>.<span class="pl-en">getBytes</span>(<span class="pl-smi">StandardCharsets</span>.<span class="pl-c1">UTF_8</span>) );
+        } <span class="pl-k">catch</span> (<span class="pl-smi">IOException</span> <span class="pl-s1">ex</span>) {
+            <span class="pl-k">throw</span> <span class="pl-k">new</span> <span class="pl-smi">RuntimeException</span>(<span class="pl-s1">ex</span>);
+        }
+        <span class="pl-k">return</span> <span class="pl-c1">false</span>;
+    }
+
+}</pre></div>
+</li>
+<li>
+<p>定义配置</p>
+<div class="highlight highlight-source-java"><pre class="notranslate"><span class="pl-k">package</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">config</span>;
+
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">filter</span>.<span class="pl-s1">JwtFilter</span>;
+<span class="pl-k">import</span> <span class="pl-s1">com</span>.<span class="pl-s1">lostpropery</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">UserRealm</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">cache</span>.<span class="pl-s1">CacheManager</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">mgt</span>.<span class="pl-s1">DefaultSessionStorageEvaluator</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">mgt</span>.<span class="pl-s1">DefaultSubjectDAO</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">mgt</span>.<span class="pl-s1">SecurityManager</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">session</span>.<span class="pl-s1">mgt</span>.<span class="pl-s1">SessionManager</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">spring</span>.<span class="pl-s1">security</span>.<span class="pl-s1">interceptor</span>.<span class="pl-s1">AuthorizationAttributeSourceAdvisor</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">spring</span>.<span class="pl-s1">web</span>.<span class="pl-s1">ShiroFilterFactoryBean</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">spring</span>.<span class="pl-s1">web</span>.<span class="pl-s1">config</span>.<span class="pl-s1">DefaultShiroFilterChainDefinition</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">spring</span>.<span class="pl-s1">web</span>.<span class="pl-s1">config</span>.<span class="pl-s1">ShiroFilterChainDefinition</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">web</span>.<span class="pl-s1">mgt</span>.<span class="pl-s1">DefaultWebSecurityManager</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">apache</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">web</span>.<span class="pl-s1">session</span>.<span class="pl-s1">mgt</span>.<span class="pl-s1">DefaultWebSessionManager</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">crazycake</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">RedisCacheManager</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">crazycake</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">RedisSessionDAO</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">crazycake</span>.<span class="pl-s1">shiro</span>.<span class="pl-s1">serializer</span>.<span class="pl-s1">StringSerializer</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">springframework</span>.<span class="pl-s1">beans</span>.<span class="pl-s1">factory</span>.<span class="pl-s1">annotation</span>.<span class="pl-s1">Autowired</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">springframework</span>.<span class="pl-s1">context</span>.<span class="pl-s1">annotation</span>.<span class="pl-s1">Bean</span>;
+<span class="pl-k">import</span> <span class="pl-s1">org</span>.<span class="pl-s1">springframework</span>.<span class="pl-s1">context</span>.<span class="pl-s1">annotation</span>.<span class="pl-s1">Configuration</span>;
+
+<span class="pl-k">import</span> <span class="pl-s1">javax</span>.<span class="pl-s1">servlet</span>.<span class="pl-s1">Filter</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">util</span>.<span class="pl-s1">Arrays</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">util</span>.<span class="pl-s1">HashMap</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">util</span>.<span class="pl-s1">LinkedHashMap</span>;
+<span class="pl-k">import</span> <span class="pl-s1">java</span>.<span class="pl-s1">util</span>.<span class="pl-s1">Map</span>;
+
+<span class="pl-c1">@</span><span class="pl-c1">Configuration</span>
+<span class="pl-k">public</span> <span class="pl-k">class</span> <span class="pl-smi">ShiroConfig</span> {
+    <span class="pl-c1">@</span><span class="pl-c1">Autowired</span>
+    <span class="pl-k">private</span> <span class="pl-smi">JwtFilter</span> <span class="pl-s1">jwtFilter</span>;
+
+    <span class="pl-c">// 将 knife4j 的资源屏蔽掉</span>
+    <span class="pl-k">private</span> <span class="pl-k">final</span> <span class="pl-smi">String</span>[] <span class="pl-s1">knife4j</span> = <span class="pl-k">new</span> <span class="pl-smi">String</span>[]{
+            <span class="pl-s">"/doc.html"</span>,
+            <span class="pl-s">"/webjars/**"</span>,
+            <span class="pl-s">"/v3/**"</span>,
+            <span class="pl-s">"/swagger-resources/**"</span>
+    };
+	<span class="pl-c">/**</span>
+<span class="pl-c">	如果项目使用 SpringAOP 就需要加上的这个 AuthorizationAttributeSourceAdvisor </span>
+<span class="pl-c">	为应用程序的方法调用自动应用Shiro的权限（授权）检查 ， 如果不加上导致访问加上权限校验注解的资源出现 404 的问题</span>
+<span class="pl-c">	**/</span>
+    <span class="pl-c1">@</span><span class="pl-c1">Bean</span>
+    <span class="pl-k">public</span> <span class="pl-smi">AuthorizationAttributeSourceAdvisor</span> <span class="pl-en">authorizationAttributeSourceAdvisor</span>() {
+        <span class="pl-k">return</span> <span class="pl-k">new</span> <span class="pl-smi">AuthorizationAttributeSourceAdvisor</span>();
+    }
+
+
+    <span class="pl-c">/**</span>
+<span class="pl-c">     * 配置Session管理器，使用Redis存储Session数据</span>
+<span class="pl-c">     *</span>
+<span class="pl-c">     * @param redisSessionDAO RedisSessionDAO对象，用于操作Redis中的Session数据</span>
+<span class="pl-c">     * @return 返回配置好的SessionManager对象</span>
+<span class="pl-c">     */</span>
+    <span class="pl-c1">@</span><span class="pl-c1">Bean</span>
+    <span class="pl-k">public</span> <span class="pl-smi">SessionManager</span> <span class="pl-en">sessionManager</span>(<span class="pl-smi">RedisSessionDAO</span> <span class="pl-s1">redisSessionDAO</span>) {
+        <span class="pl-smi">DefaultWebSessionManager</span> <span class="pl-s1">sessionManager</span> = <span class="pl-k">new</span> <span class="pl-smi">DefaultWebSessionManager</span>();
+        <span class="pl-c">// 设置存储到redis中用户信息的前缀</span>
+        <span class="pl-s1">redisSessionDAO</span>.<span class="pl-en">setKeyPrefix</span>(<span class="pl-s">"shiro:"</span>);
+        <span class="pl-s1">sessionManager</span>.<span class="pl-en">setSessionDAO</span>(<span class="pl-s1">redisSessionDAO</span>);
+        <span class="pl-k">return</span> <span class="pl-s1">sessionManager</span>;
+    }
+
+
+    <span class="pl-c">/**</span>
+<span class="pl-c">     * 配置安全管理员，整合用户认证和授权信息</span>
+<span class="pl-c">     *</span>
+<span class="pl-c">     * @param accountRealm      用户认证Realm</span>
+<span class="pl-c">     * @param sessionManager    Session管理器</span>
+<span class="pl-c">     * @param redisCacheManager Redis缓存管理器</span>
+<span class="pl-c">     * @return 返回配置好的DefaultWebSecurityManager对象</span>
+<span class="pl-c">     */</span>
+    <span class="pl-c1">@</span><span class="pl-c1">Bean</span>
+    <span class="pl-k">public</span> <span class="pl-smi">DefaultWebSecurityManager</span> <span class="pl-en">securityManager</span>(
+        <span class="pl-smi">UserRealm</span> <span class="pl-s1">accountRealm</span>,
+        <span class="pl-smi">SessionManager</span> <span class="pl-s1">sessionManager</span>,
+        <span class="pl-smi">RedisCacheManager</span> <span class="pl-s1">redisCacheManager</span>
+    ) {
+        <span class="pl-smi">DefaultWebSecurityManager</span> <span class="pl-s1">securityManager</span> = <span class="pl-k">new</span> <span class="pl-smi">DefaultWebSecurityManager</span>(<span class="pl-s1">accountRealm</span>);
+        <span class="pl-c">// 生成的用户的信息缓存前缀</span>
+        <span class="pl-s1">redisCacheManager</span>.<span class="pl-en">setKeyPrefix</span>(<span class="pl-s">"shiro:"</span>);
+        <span class="pl-s1">securityManager</span>.<span class="pl-en">setSessionManager</span>(<span class="pl-s1">sessionManager</span>);
+        <span class="pl-s1">securityManager</span>.<span class="pl-en">setCacheManager</span>(<span class="pl-s1">redisCacheManager</span>);
+        <span class="pl-c">/*</span>
+<span class="pl-c">         * 关闭shiro自带的session，详情见文档</span>
+<span class="pl-c">         */</span>
+        <span class="pl-smi">DefaultSubjectDAO</span> <span class="pl-s1">subjectDAO</span> = <span class="pl-k">new</span> <span class="pl-smi">DefaultSubjectDAO</span>();
+        <span class="pl-smi">DefaultSessionStorageEvaluator</span> <span class="pl-s1">defaultSessionStorageEvaluator</span> = <span class="pl-k">new</span> <span class="pl-smi">DefaultSessionStorageEvaluator</span>();
+        <span class="pl-s1">defaultSessionStorageEvaluator</span>.<span class="pl-en">setSessionStorageEnabled</span>(<span class="pl-c1">false</span>);
+        <span class="pl-s1">subjectDAO</span>.<span class="pl-en">setSessionStorageEvaluator</span>(<span class="pl-s1">defaultSessionStorageEvaluator</span>);
+        <span class="pl-s1">securityManager</span>.<span class="pl-en">setSubjectDAO</span>(<span class="pl-s1">subjectDAO</span>);
+        <span class="pl-k">return</span> <span class="pl-s1">securityManager</span>;
+    }
+
+
+    <span class="pl-c">/**</span>
+<span class="pl-c">     * 定义过滤器链，指定不同路径的过滤器规则</span>
+<span class="pl-c">     *</span>
+<span class="pl-c">     * @return 返回配置好的ShiroFilterChainDefinition对象</span>
+<span class="pl-c">     */</span>
+    <span class="pl-c1">@</span><span class="pl-c1">Bean</span>
+    <span class="pl-k">public</span> <span class="pl-smi">ShiroFilterChainDefinition</span> <span class="pl-en">shiroFilterChainDefinition</span>() {
+        <span class="pl-smi">DefaultShiroFilterChainDefinition</span> <span class="pl-s1">chainDefinition</span> = <span class="pl-k">new</span> <span class="pl-smi">DefaultShiroFilterChainDefinition</span>();
+        <span class="pl-smi">Map</span>&lt;<span class="pl-smi">String</span>, <span class="pl-smi">String</span>&gt; <span class="pl-s1">filterMap</span> = <span class="pl-k">new</span> <span class="pl-smi">LinkedHashMap</span>&lt;&gt;();
+        <span class="pl-c">// 无需校验的接口</span>
+        <span class="pl-s1">filterMap</span>.<span class="pl-en">put</span>(<span class="pl-smi">Arrays</span>.<span class="pl-en">toString</span>(<span class="pl-s1">knife4j</span>), <span class="pl-s">"anon"</span>);
+        <span class="pl-s1">filterMap</span>.<span class="pl-en">put</span>(<span class="pl-s">"/common/**"</span>, <span class="pl-s">"anon"</span>);
+
+        <span class="pl-c">// 需要校验的接口 </span>
+        <span class="pl-s1">filterMap</span>.<span class="pl-en">put</span>(<span class="pl-s">"/**"</span>, <span class="pl-s">"jwt"</span>); <span class="pl-c">// 主要通过注解方式校验权限</span>
+        <span class="pl-s1">chainDefinition</span>.<span class="pl-en">addPathDefinitions</span>(<span class="pl-s1">filterMap</span>);
+        <span class="pl-k">return</span> <span class="pl-s1">chainDefinition</span>;
+    }
+
+    <span class="pl-c">/**</span>
+<span class="pl-c">     * 配置ShiroFilterFactoryBean，整合过滤器和安全管理器</span>
+<span class="pl-c">     *</span>
+<span class="pl-c">     * @param securityManager            安全管理器</span>
+<span class="pl-c">     * @param shiroFilterChainDefinition 过滤器链定义</span>
+<span class="pl-c">     * @return 返回配置好的ShiroFilterFactoryBean对象</span>
+<span class="pl-c">     */</span>
+    <span class="pl-c1">@</span><span class="pl-c1">Bean</span>(<span class="pl-s">"shiroFilterFactoryBean"</span>)
+    <span class="pl-k">public</span> <span class="pl-smi">ShiroFilterFactoryBean</span> <span class="pl-en">shiroFilterFactoryBean</span>(<span class="pl-smi">SecurityManager</span> <span class="pl-s1">securityManager</span>,
+                                                         <span class="pl-smi">ShiroFilterChainDefinition</span> <span class="pl-s1">shiroFilterChainDefinition</span>) {
+        <span class="pl-smi">ShiroFilterFactoryBean</span> <span class="pl-s1">shiroFilter</span> = <span class="pl-k">new</span> <span class="pl-smi">ShiroFilterFactoryBean</span>();
+        <span class="pl-s1">shiroFilter</span>.<span class="pl-en">setSecurityManager</span>(<span class="pl-s1">securityManager</span>);
+        <span class="pl-smi">Map</span>&lt;<span class="pl-smi">String</span>, <span class="pl-smi">Filter</span>&gt; <span class="pl-s1">filters</span> = <span class="pl-k">new</span> <span class="pl-smi">HashMap</span>&lt;&gt;();
+        <span class="pl-s1">filters</span>.<span class="pl-en">put</span>(<span class="pl-s">"jwt"</span>, <span class="pl-s1">jwtFilter</span>);
+        <span class="pl-s1">shiroFilter</span>.<span class="pl-en">setFilters</span>(<span class="pl-s1">filters</span>);
+
+        <span class="pl-smi">Map</span>&lt;<span class="pl-smi">String</span>, <span class="pl-smi">String</span>&gt; <span class="pl-s1">filterMap</span> = <span class="pl-s1">shiroFilterChainDefinition</span>.<span class="pl-en">getFilterChainMap</span>();
+
+        <span class="pl-s1">shiroFilter</span>.<span class="pl-en">setFilterChainDefinitionMap</span>(<span class="pl-s1">filterMap</span>);
+
+        <span class="pl-k">return</span> <span class="pl-s1">shiroFilter</span>;
+    }
+}</pre></div>
+</li>
+<li>
+<p>取消使用 ShiroAnnotationProcessorAutoConfiguration  ( 使用 Shiro 框架的同时使用了 SpringAOP 才要做 )</p>
+<p>ShiroAnnotationProcessorAutoConfiguration：  是Apache Shiro的Spring Boot自动配置类，它负责处理Shiro的注解处理器。这个类在Spring Boot应用启动时，如果被包含在配置中，会自动配置Spring AOP以便处理Shiro的注解，如@RequiresAuthentication, @RequiresRoles, @RequiresPermissions等。这些注解用于在方法级别控制访问权限。</p>
+<p>在使用 Shiro 框架的同时使用了 SpringAOP 框架，这就有可能导致 Controller初始化时被增强了两次，并且在第二次增强的使用丢掉了逐渐，导致了该Controller无法被正常映射。</p>
+<div class="highlight highlight-source-yaml"><pre class="notranslate"> <span class="pl-ent">spring</span>:
+   <span class="pl-ent">autoconfigure</span>:
+      <span class="pl-ent">exclude</span>: <span class="pl-s">org.apache.shiro.spring.boot.autoconfigure.ShiroAnnotationProcessorAutoConfiguration</span></pre></div>
+</li>
+</ol></div>
+<div style="font-size:small;margin-top:8px;float:right;"></div>
+
+<button class="btn btn-block" type="button" onclick="openComments()" id="cmButton">评论</button>
+<div class="comments" id="comments"></div>
+
+</div>
+    <div id="footer">Copyright © <span id="year"></span><a href="https://2004GIF.github.io/chenzian-shrimp.github.io"> 陈子安个人博客 </a>
+<p>
+<span id="runday"></span>Powered by <a href="https://meekdai.com/Gmeek.html" target="_blank">Gmeek</a>
+</p>
+
+<script>
+if(""!=""){
+    var now=new Date();
+    var startSite=new Date("");
+    var diff=now.getTime()-startSite.getTime();
+    var diffDay=Math.floor(diff/(1000*60*60*24));
+    document.getElementById("year").innerHTML=now.getFullYear();
+    if(""!=""){document.getElementById("runday").innerHTML=" • "+"网站运行"+diffDay+"天"+" • ";}
+    else{document.getElementById("runday").innerHTML="网站运行"+diffDay+"天"+" • ";}
+}
+</script>
+</div>
+</body>
+<script>
+var IconList={'sun': 'M8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM8 12a4 4 0 100-8 4 4 0 000 8zM8 0a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0V.75A.75.75 0 018 0zm0 13a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 018 13zM2.343 2.343a.75.75 0 011.061 0l1.06 1.061a.75.75 0 01-1.06 1.06l-1.06-1.06a.75.75 0 010-1.06zm9.193 9.193a.75.75 0 011.06 0l1.061 1.06a.75.75 0 01-1.06 1.061l-1.061-1.06a.75.75 0 010-1.061zM16 8a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 0116 8zM3 8a.75.75 0 01-.75.75H.75a.75.75 0 010-1.5h1.5A.75.75 0 013 8zm10.657-5.657a.75.75 0 010 1.061l-1.061 1.06a.75.75 0 11-1.06-1.06l1.06-1.06a.75.75 0 011.06 0zm-9.193 9.193a.75.75 0 010 1.06l-1.06 1.061a.75.75 0 11-1.061-1.06l1.06-1.061a.75.75 0 011.061 0z', 'moon': 'M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786zm1.616 1.945a7 7 0 01-7.678 7.678 5.5 5.5 0 107.678-7.678z', 'sync': 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z', 'home': 'M6.906.664a1.749 1.749 0 0 1 2.187 0l5.25 4.2c.415.332.657.835.657 1.367v7.019A1.75 1.75 0 0 1 13.25 15h-3.5a.75.75 0 0 1-.75-.75V9H7v5.25a.75.75 0 0 1-.75.75h-3.5A1.75 1.75 0 0 1 1 13.25V6.23c0-.531.242-1.034.657-1.366l5.25-4.2Zm1.25 1.171a.25.25 0 0 0-.312 0l-5.25 4.2a.25.25 0 0 0-.094.196v7.019c0 .138.112.25.25.25H5.5V8.25a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 .75.75v5.25h2.75a.25.25 0 0 0 .25-.25V6.23a.25.25 0 0 0-.094-.195Z', 'github': 'M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z'};
+var utterancesLoad=0;
+
+let themeSettings={
+    "dark": ["dark","moon","#00f0ff","dark-blue"],
+    "light": ["light","sun","#ff5000","github-light"],
+    "auto": ["auto","sync","","preferred-color-scheme"]
+};
+function changeTheme(mode, icon, color, utheme){
+    document.documentElement.setAttribute("data-color-mode",mode);
+    document.getElementById("themeSwitch").setAttribute("d",value=IconList[icon]);
+    document.getElementById("themeSwitch").parentNode.style.color=color;
+    if(utterancesLoad==1){utterancesTheme(utheme);}
+}
+function modeSwitch(){
+    let currentMode=document.documentElement.getAttribute('data-color-mode');
+    let newMode = currentMode === "light" ? "dark" : currentMode === "dark" ? "auto" : "light";
+    localStorage.setItem("meek_theme", newMode);
+    if(themeSettings[newMode]){
+        changeTheme(...themeSettings[newMode]);
+    }
+}
+function utterancesTheme(theme){
+    const message={type:'set-theme',theme: theme};
+    const iframe=document.getElementsByClassName('utterances-frame')[0];
+    iframe.contentWindow.postMessage(message,'https://utteranc.es');
+}
+if(themeSettings[theme]){changeTheme(...themeSettings[theme]);}
+console.log("\n %c Gmeek last https://github.com/Meekdai/Gmeek \n\n","padding:5px 0;background:#02d81d;color:#fff");
+</script>
+
+<script>
+document.getElementById("pathHome").setAttribute("d",IconList["home"]);
+document.getElementById("pathIssue").setAttribute("d",IconList["github"]);
+
+
+
+function openComments(){
+    cm=document.getElementById("comments");
+    cmButton=document.getElementById("cmButton");
+    cmButton.innerHTML="loading";
+    span=document.createElement("span");
+    span.setAttribute("class","AnimatedEllipsis");
+    cmButton.appendChild(span);
+
+    script=document.createElement("script");
+    script.setAttribute("src","https://utteranc.es/client.js");
+    script.setAttribute("repo","2004GIF/chenzian-shrimp.github.io");
+    script.setAttribute("issue-term","title");
+    
+    if(localStorage.getItem("meek_theme")=="dark"){script.setAttribute("theme","dark-blue");}
+    else if(localStorage.getItem("meek_theme")=="light") {script.setAttribute("theme","github-light");}
+    else{script.setAttribute("theme","preferred-color-scheme");}
+    
+    script.setAttribute("crossorigin","anonymous");
+    script.setAttribute("async","");
+    cm.appendChild(script);
+
+    int=self.setInterval("iFrameLoading()",200);
+}
+
+function iFrameLoading(){
+    var utterances=document.getElementsByClassName('utterances');
+    if(utterances.length==1){
+        if(utterances[0].style.height!=""){
+            utterancesLoad=1;
+            int=window.clearInterval(int);
+            document.getElementById("cmButton").style.display="none";
+            console.log("utterances Load OK");
+        }
+    }
+}
+</script>
+
+
+</html>
